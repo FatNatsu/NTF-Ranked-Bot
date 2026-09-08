@@ -16,6 +16,7 @@ intents.members = True
 intents.voice_states = True
 intents.message_content = True
 
+
 class NTFBot(commands.Bot):
     def __init__(self):
         super().__init__(
@@ -42,27 +43,30 @@ class NTFBot(commands.Bot):
         for extension in extensions:
             try:
                 await self.load_extension(extension)
-                print(f"✅ Loaded {extension}")
+                print(f"✅ Loaded {extension}", flush=True)
             except Exception as e:
-                print(f"❌ Failed to load {extension}: {e}")
+                print(f"❌ Failed to load {extension}: {e}", flush=True)
 
         # Sync slash commands
-if GUILD_ID:
-    guild = discord.Object(id=int(GUILD_ID))
-    self.tree.copy_global_to(guild=guild)
-    synced = await self.tree.sync(guild=guild)
-else:
-    synced = await self.tree.sync()
+        if GUILD_ID:
+            guild = discord.Object(id=int(GUILD_ID))
+            self.tree.copy_global_to(guild=guild)
+            synced = await self.tree.sync(guild=guild)
+        else:
+            synced = await self.tree.sync()
 
-print(f"🟦 Synced {len(synced)} slash commands.", flush=True)
+        print(f"🟦 Synced {len(synced)} slash commands.", flush=True)
+
 
 bot = NTFBot()
 
+
 @bot.event
 async def on_ready():
-    print("=" * 40)
-    print(f"Logged in as: {bot.user}")
-    print(f"Bot ID: {bot.user.id}")
-    print("=" * 40)
+    print("=" * 40, flush=True)
+    print(f"Logged in as: {bot.user}", flush=True)
+    print(f"Bot ID: {bot.user.id}", flush=True)
+    print("=" * 40, flush=True)
+
 
 bot.run(TOKEN)
