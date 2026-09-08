@@ -196,12 +196,6 @@ class Session(commands.Cog):
         session["progress_message"] = progress_message
         session["control_message"] = control_message
 
-"voice_channels": voice_channels,
-"bench": [],
-"progress_message": None,
-"control_message": None
-}
-
 # Clear previous bot messages
 try:
 async for msg in progress_channel.history(limit=20):
