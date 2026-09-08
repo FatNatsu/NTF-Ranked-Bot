@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TOKEN = os.getenv("TOKEN")
+GUILD_ID = os.getenv("GUILD_ID")
 
 intents = discord.Intents.default()
 intents.members = True
@@ -15,14 +16,19 @@ intents.message_content = True
 
 class NTFBot(commands.Bot):
     async def setup_hook(self):
+        # Load the cogs we've built so far
         await self.load_extension("cogs.setup")
+        await self.load_extension("cogs.queue")
 
-        guild = discord.Object(id=int(os.getenv("GUILD_ID")))
+        # Instant slash command sync for your server
+        if GUILD_ID:
+            guild = discord.Object(id=int(GUILD_ID))
+            self.tree.copy_global_to(guild=guild)
+            synced = await self.tree.sync(guild=guild)
+        else:
+            synced = await self.tree.sync()
 
-        self.tree.copy_global_to(guild=guild)
-        synced = await self.tree.sync(guild=guild)
-
-        print(f"Synced {len(synced)} guild commands.")
+        print(f"Synced {len(synced)} command(s).")
 
 bot = NTFBot(command_prefix="!", intents=intents)
 
