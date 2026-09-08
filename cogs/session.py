@@ -435,6 +435,4 @@ class Session(commands.Cog):
 
 
 async def setup(bot):
-    cog = Session(bot)
-    await bot.add_cog(cog)
-    bot.tree.add_command(cog.close_group)
+    await bot.add_cog(Session)bot))
