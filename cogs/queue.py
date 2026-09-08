@@ -1,126 +1,234 @@
 import asyncio
+import aiosqlite
 import discord
 from discord.ext import commands
 from discord import app_commands
 
-QUEUE = []
-READY = set()
+DB_NAME = "ntf.db"
 
-QUEUE_SIZE = 24
-READY_TIMEOUT = 30
-READY_ACTIVE = False
+class Queue(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        self.queue = []
+        self.queue_message = None
+        self.queue_open = False
+        self.ready_check = False
 
+    async def get_mode(self):
+        async with aiosqlite.connect(DB_NAME) as db:
+            cur = await db.execute("SELECT value FROM settings WHERE key='match_mode'")
+            row = await cur.fetchone()
+            return row[0] if row else "4team"
 
-def queue_embed():
-    embed = discord.Embed(
-        title="⚽ NTF Queue",
-        description="The next kick-off begins when 24 players step onto the pitch.",
-        colour=0x2EC4FF
+    async def limits(self):
+        mode = await self.get_mode()
+        if mode == "4team":
+            return 24, 20, "League Mode"
+        return 12, 10, "Rivals Mode"
+
+    async def queue_embed(self):
+        cap, force, name = await self.limits()
+
+        embed = discord.Embed(
+            title="⚽ NTF Queue",
+            description=f"**{name}**",
+            colour=0x2EC4FF
+        )
+
+        embed.add_field(
+            name="Players Queued",
+            value=f"**{len(self.queue)}/{cap}**",
+            inline=True
+        )
+
+        embed.add_field(
+            name="Force Start",
+            value=f"**{force} players**",
+            inline=True
+        )
+
+        embed.add_field(
+            name="Status",
+            value="Open" if self.queue_open else "Closed",
+            inline=True
+        )
+
+        embed.set_footer(text="NTF • Enter the Pitch")
+
+        return embed
+
+    async def refresh(self):
+        if self.queue_message:
+            await self.queue_message.edit(
+                embed=await self.queue_embed(),
+                view=QueueView(self)
+            )
+
+    async def start_ready(self, channel):
+        if self.ready_check:
+            return
+
+        self.ready_check = True
+
+        await channel.send(
+            "## ⚡ MATCH FOUND!\nAccepting automatically in **30 seconds**."
+        )
+
+        await asyncio.sleep(30)
+
+        await channel.send("Building teams...")
+
+        self.queue_open = False
+        self.ready_check = False
+
+    queue_group = app_commands.Group(
+        name="queue",
+        description="Manage the NTF queue."
     )
 
-    embed.add_field(
-        name="Players on the Pitch",
-        value=f"{len(QUEUE)}/{QUEUE_SIZE}",
-        inline=True
-    )
+    @queue_group.command(name="open", description="Open the NTF queue.")
+    @app_commands.default_permissions(administrator=True)
+    async def open(self, interaction: discord.Interaction):
 
-    embed.add_field(
-        name="Status",
-        value="Open" if len(QUEUE) < QUEUE_SIZE else "Ready Check",
-        inline=True
-    )
+        if self.queue_open:
+            await interaction.response.send_message(
+                "Queue already exists.",
+                ephemeral=True
+            )
+            return
 
-    embed.add_field(
-        name="Club Rotation",
-        value=(
-            "Fram Esports\n"
-            "The Fifth Pass\n"
-            "Warya Wonders\n"
-            "Delectable XI\n"
-            "Joyboi"
-        ),
-        inline=False
-    )
+        self.queue.clear()
+        self.queue_open = True
 
-    embed.set_footer(text="NTF • Enter the Pitch")
-    return embed
+        self.queue_message = await interaction.channel.send(
+            embed=await self.queue_embed(),
+            view=QueueView(self)
+        )
 
+        await interaction.response.send_message(
+            "Queue opened.",
+            ephemeral=True
+        )
 
-class ReadyView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=READY_TIMEOUT)
+    @queue_group.command(name="forcestart", description="Force start the queue.")
+    @app_commands.default_permissions(administrator=True)
+    async def forcestart(self, interaction: discord.Interaction):
 
-    @discord.ui.button(label="Accept", style=discord.ButtonStyle.success, emoji="✅")
-    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id in QUEUE:
-            READY.add(interaction.user.id)
-        await interaction.response.send_message("You're locked in.", ephemeral=True)
+        _, force, _ = await self.limits()
 
+        if len(self.queue) != force:
+            await interaction.response.send_message(
+                f"Force Start requires exactly **{force}** players.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message(
+            "Force Start initiated.",
+            ephemeral=True
+        )
+
+        await self.start_ready(interaction.channel)
+
+    @queue_group.command(name="close", description="Close the queue.")
+    @app_commands.default_permissions(administrator=True)
+    async def close(self, interaction: discord.Interaction):
+
+        self.queue.clear()
+        self.queue_open = False
+
+        await self.refresh()
+
+        await interaction.response.send_message(
+            "Queue closed.",
+            ephemeral=True
+        )
+
+    @queue_group.command(name="status", description="Show queued players.")
+    async def status(self, interaction: discord.Interaction):
+
+        if not self.queue:
+            await interaction.response.send_message(
+                "Nobody is queued."
+            )
+            return
+
+        names = "\n".join(
+            f"• <@{i}>"
+            for i in self.queue
+        )
+
+        embed = discord.Embed(
+            title="Queued Players",
+            description=names,
+            colour=0x2EC4FF
+        )
+
+        await interaction.response.send_message(embed=embed)
 
 class QueueView(discord.ui.View):
     def __init__(self, cog):
         super().__init__(timeout=None)
         self.cog = cog
 
-    @discord.ui.button(label="Join Queue", style=discord.ButtonStyle.success, emoji="⚽")
-    async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id not in QUEUE:
-            QUEUE.append(interaction.user.id)
+    @discord.ui.button(
+        label="Join Queue",
+        style=discord.ButtonStyle.success,
+        emoji="⚽"
+    )
+    async def join(self, interaction: discord.Interaction, button):
 
-        await interaction.response.edit_message(embed=queue_embed(), view=self)
+        cap, _, _ = await self.cog.limits()
 
-        if len(QUEUE) == QUEUE_SIZE:
-            await self.cog.start_ready_check(interaction.channel)
-
-    @discord.ui.button(label="Leave Queue", style=discord.ButtonStyle.danger, emoji="❌")
-    async def leave(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id in QUEUE:
-            QUEUE.remove(interaction.user.id)
-
-        await interaction.response.edit_message(embed=queue_embed(), view=self)
-
-
-class Queue(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-
-    @app_commands.command(name="queue", description="Post the NTF Queue panel.")
-    @app_commands.default_permissions(administrator=True)
-    async def queue(self, interaction: discord.Interaction):
-        await interaction.channel.send(embed=queue_embed(), view=QueueView(self))
-        await interaction.response.send_message("NTF Queue panel created.", ephemeral=True)
-
-    async def start_ready_check(self, channel):
-        global READY_ACTIVE
-
-        if READY_ACTIVE:
+        if not self.cog.queue_open:
+            await interaction.response.send_message(
+                "Queue isn't open.",
+                ephemeral=True
+            )
             return
 
-        READY_ACTIVE = True
-        READY.clear()
+        if interaction.user.id in self.cog.queue:
+            await interaction.response.send_message(
+                "You're already queued.",
+                ephemeral=True
+            )
+            return
 
-        await channel.send(
-            "## ⚽ MATCH FOUND!\nEveryone has 30 seconds to accept.",
-            view=ReadyView()
+        if len(self.cog.queue) >= cap:
+            await interaction.response.send_message(
+                "Queue is full.",
+                ephemeral=True
+            )
+            return
+
+        self.cog.queue.append(interaction.user.id)
+
+        await self.cog.refresh()
+
+        await interaction.response.send_message(
+            "Joined the queue.",
+            ephemeral=True
         )
 
-        await asyncio.sleep(READY_TIMEOUT)
+        if len(self.cog.queue) == cap:
+            await self.cog.start_ready(interaction.channel)
 
-        failed = [player for player in QUEUE if player not in READY]
+    @discord.ui.button(
+        label="Leave Queue",
+        style=discord.ButtonStyle.danger,
+        emoji="❌"
+    )
+    async def leave(self, interaction: discord.Interaction, button):
 
-        for player in failed:
-            QUEUE.remove(player)
+        if interaction.user.id in self.cog.queue:
+            self.cog.queue.remove(interaction.user.id)
 
-        READY_ACTIVE = False
+        await self.cog.refresh()
 
-        if failed:
-            mentions = " ".join(f"<@{player}>" for player in failed)
-            await channel.send(
-                f"{mentions} didn't accept.\nQueue is now {len(QUEUE)}/{QUEUE_SIZE}."
-            )
-        else:
-            await channel.send("🔥 Everyone accepted. Building teams...")
-
+        await interaction.response.send_message(
+            "Left the queue.",
+            ephemeral=True
+        )
 
 async def setup(bot):
     await bot.add_cog(Queue(bot))
