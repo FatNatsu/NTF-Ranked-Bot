@@ -1,135 +1,92 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
-import aiosqlite
 
-DB_NAME = "ntf.db"
+class WinnerView(discord.ui.View):
+    def __init__(self, session):
+        super().__init__(timeout=None)
+        self.session = session
+
+    @discord.ui.button(label="Team 1 Wins", style=discord.ButtonStyle.success)
+    async def team1(self, interaction, button):
+        await self.finish(interaction, 0)
+
+    @discord.ui.button(label="Team 2 Wins", style=discord.ButtonStyle.success)
+    async def team2(self, interaction, button):
+        await self.finish(interaction, 1)
+
+    async def finish(self, interaction, winner_index):
+
+        session = self.session.active
+
+        if session["mode"] == "4team":
+
+            round_num = session["round"]
+            games = session["fixtures"][round_num]
+
+            game = games[len(session["played"])]
+            winner = game[winner_index]
+
+            session["standings"][winner] += 1
+            session["played"].append(winner)
+
+            await interaction.response.edit_message(
+                content=f"✅ {winner} recorded.",
+                view=None
+            )
+
+            if len(session["played"]) == 2:
+
+                session["played"] = []
+
+                if session["round"] == 3:
+
+                    await interaction.channel.send(
+                        embed=await self.session.standings_embed()
+                    )
+
+                    winner = max(
+                        session["standings"],
+                        key=session["standings"].get
+                    )
+
+                    await interaction.channel.send(
+                        f"🏆 **{winner} wins the session!**"
+                    )
+
+                else:
+
+                    session["round"] += 1
+
+                    await interaction.channel.send(
+                        embed=await self.session.standings_embed()
+                    )
+
+                    await self.session.post_round(interaction.channel)
 
 class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    # ---------------- CAPTAINS ---------------- #
+    @discord.app_commands.command(
+        name="controlpanel",
+        description="Open the admin control panel."
+    )
+    @discord.app_commands.default_permissions(administrator=True)
+    async def controlpanel(self, interaction: discord.Interaction):
 
-    @app_commands.command(name="captain_add", description="Add a player to the captain whitelist.")
-    @app_commands.default_permissions(administrator=True)
-    async def captain_add(self, interaction: discord.Interaction, member: discord.Member):
+        session = self.bot.get_cog("Session")
 
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute(
-                "INSERT OR IGNORE INTO captains(user_id) VALUES(?)",
-                (member.id,)
+        if not session.active:
+            await interaction.response.send_message(
+                "No active session.",
+                ephemeral=True
             )
-            await db.commit()
-
-        await interaction.response.send_message(
-            f"👑 {member.mention} added to the captain whitelist.",
-            ephemeral=True
-        )
-
-    @app_commands.command(name="captain_remove", description="Remove a player from the captain whitelist.")
-    @app_commands.default_permissions(administrator=True)
-    async def captain_remove(self, interaction: discord.Interaction, member: discord.Member):
-
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute(
-                "DELETE FROM captains WHERE user_id=?",
-                (member.id,)
-            )
-            await db.commit()
-
-        await interaction.response.send_message(
-            f"❌ {member.mention} removed from the captain whitelist.",
-            ephemeral=True
-        )
-
-    @app_commands.command(name="captain_list", description="Show all eligible captains.")
-    async def captain_list(self, interaction: discord.Interaction):
-
-        async with aiosqlite.connect(DB_NAME) as db:
-            cursor = await db.execute("SELECT user_id FROM captains")
-            rows = await cursor.fetchall()
-
-        if not rows:
-            await interaction.response.send_message("No captains have been added.")
             return
 
-        text = "\n".join(f"• <@{r[0]}>" for r in rows)
-
-        embed = discord.Embed(
-            title="👑 Captain Whitelist",
-            description=text,
-            colour=0x2EC4FF
-        )
-
-        await interaction.response.send_message(embed=embed)
-
-    # ---------------- TEAMS ---------------- #
-
-    @app_commands.command(name="team_add", description="Add a new team.")
-    @app_commands.default_permissions(administrator=True)
-    async def team_add(self, interaction: discord.Interaction, name: str):
-
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute(
-                "INSERT OR IGNORE INTO teams(name) VALUES(?)",
-                (name,)
-            )
-            await db.commit()
-
         await interaction.response.send_message(
-            f"✅ **{name}** added.",
-            ephemeral=True
+            "⚙️ Session Control",
+            view=WinnerView(session)
         )
-
-    @app_commands.command(name="team_remove", description="Remove a team.")
-    @app_commands.default_permissions(administrator=True)
-    async def team_remove(self, interaction: discord.Interaction, name: str):
-
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute(
-                "DELETE FROM teams WHERE name=?",
-                (name,)
-            )
-            await db.commit()
-
-        await interaction.response.send_message(
-            f"❌ **{name}** removed.",
-            ephemeral=True
-        )
-
-    @app_commands.command(name="team_rename", description="Rename a team.")
-    @app_commands.default_permissions(administrator=True)
-    async def team_rename(self, interaction: discord.Interaction, old_name: str, new_name: str):
-
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute(
-                "UPDATE teams SET name=? WHERE name=?",
-                (new_name, old_name)
-            )
-            await db.commit()
-
-        await interaction.response.send_message(
-            f"✏️ **{old_name}** renamed to **{new_name}**.",
-            ephemeral=True
-        )
-
-    @app_commands.command(name="team_list", description="Show all available teams.")
-    async def team_list(self, interaction: discord.Interaction):
-
-        async with aiosqlite.connect(DB_NAME) as db:
-            cursor = await db.execute("SELECT name FROM teams ORDER BY name")
-            rows = await cursor.fetchall()
-
-        embed = discord.Embed(
-            title="🏆 Team Pool",
-            colour=0x2EC4FF
-        )
-
-        embed.description = "\n".join(f"• {r[0]}" for r in rows)
-
-        await interaction.response.send_message(embed=embed)
-
 
 async def setup(bot):
     await bot.add_cog(Admin(bot))
