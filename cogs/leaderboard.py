@@ -1,6 +1,56 @@
 import discord
 import aiosqlite
 from discord.ext import commands
+from discord import app_commands
+
+DB_NAME = "ntf.db"
+
+
+def get_rating(mmr: int):
+    if mmr >= 2500:
+        return "S+"
+    if mmr >= 2200:
+        return "S"
+    if mmr >= 1900:
+        return "A+"
+    if mmr >= 1600:
+        return "A"
+    if mmr >= 1300:
+        return "B+"
+    if mmr >= 1000:
+        return "B"
+    if mmr >= 700:
+        return "C+"
+    if mmr >= 400:
+        return "C"
+    if mmr >= 200:
+        return "D"
+    return "E"
+
+
+class Leaderboard(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    async def get_top_players(self):
+        async with aiosqlite.connect(DB_NAME) as db:
+            cur = await db.execute("""
+                SELECT user_id, mmr
+                FROM players
+                ORDER BY mmr DESC
+                LIMIT 10
+            """)
+            return await cur.fetchall()
+
+    async def get_player_position(self, user_id):
+        async with aiosqlite.connect(DB_NAME) as db:
+            cur = await db.execute("""
+                SELECT user_id
+                FROM players
+                ORDER BY mmr DESC
+            """)
+            players = await cur.fetchall()
+
         for pos, (pid,) in enumerate(players, start=1):
             if pid == user_id:
                 return pos
