@@ -2,6 +2,14 @@ import aiosqlite
 
 DB_NAME = "ntf.db"
 
+DEFAULT_TEAMS = [
+    "Fram Esports",
+    "The Fifth Pass",
+    "Warya Wonders",
+    "Delectable XI",
+    "Joyboi"
+]
+
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
 
@@ -26,18 +34,16 @@ async def init_db():
         )
         """)
 
-        default_teams = [
-            "Fram Esports",
-            "The Fifth Pass",
-            "Warya Wonders",
-            "Delectable XI",
-            "Joyboi"
-        ]
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS settings(
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+        """)
 
-        for team in default_teams:
-            await db.execute(
-                "INSERT OR IGNORE INTO teams(name) VALUES(?)",
-                (team,)
-            )
+        await db.execute("""
+        INSERT OR IGNORE INTO settings(key,value)
+        VALUES('match_mode','4team')
+        """)
 
-        await db.commit()
+        for team in DEFAULT_TEAMS:
