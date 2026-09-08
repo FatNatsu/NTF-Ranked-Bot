@@ -1,7 +1,9 @@
 import random
-import aiosqlite
 import discord
+import aiosqlite
 from discord.ext import commands
+
+from utils.team_balancer import TeamBalancer
 
 DB_NAME = "ntf.db"
 
@@ -15,19 +17,39 @@ class Matchmaking(commands.Cog):
                 "SELECT value FROM settings WHERE key='match_mode'"
             )
             row = await cur.fetchone()
+            return row[0] if row else "4team"
 
-        return row[0] if row else "4team"
+    async def get_players(self, ids):
 
-    async def get_clubs(self, amount):
+        players = []
+
         async with aiosqlite.connect(DB_NAME) as db:
-            cur = await db.execute(
-                "SELECT name FROM teams ORDER BY RANDOM()"
-            )
-            rows = await cur.fetchall()
 
-        return [r[0] for r in rows][:amount]
+            for user_id in ids:
+
+                cur = await db.execute(
+                    "SELECT mmr, role FROM players WHERE user_id=?",
+                    (user_id,)
+                )
+
+                row = await cur.fetchone()
+
+                if row:
+                    mmr, role = row
+                else:
+                    mmr = 1000
+                    role = "ANY"
+
+                players.append({
+                    "id": user_id,
+                    "mmr": mmr,
+                    "role": role
+                })
+
+        return players
 
     async def get_whitelist(self):
+
         async with aiosqlite.connect(DB_NAME) as db:
             cur = await db.execute(
                 "SELECT user_id FROM captains"
@@ -36,42 +58,35 @@ class Matchmaking(commands.Cog):
 
         return [r[0] for r in rows]
 
-    async def start_session(self, guild, channel, queued_players):
+    async def get_clubs(self, amount):
+
+        async with aiosqlite.connect(DB_NAME) as db:
+            cur = await db.execute(
+                "SELECT name FROM teams ORDER BY RANDOM()"
+            )
+            rows = await cur.fetchall()
+
+        return [r[0] for r in rows][:amount]
+
+    async def start_session(self, guild, channel, queue_ids):
 
         mode = await self.get_mode()
         team_count = 4 if mode == "4team" else 2
 
         clubs = await self.get_clubs(team_count)
+        players = await self.get_players(queue_ids)
 
         whitelist = await self.get_whitelist()
-        eligible = [p for p in queued_players if p in whitelist]
+        eligible = [p["id"] for p in players if p["id"] in whitelist]
 
         if len(eligible) >= team_count:
             captains = random.sample(eligible, team_count)
         else:
-            captains = random.sample(
-                queued_players,
-                min(team_count, len(queued_players))
-            )
+            captains = random.sample(queue_ids, min(team_count, len(queue_ids)))
 
-        teams = {club: [] for club in clubs}
+        teams = TeamBalancer.balance(players, captains, clubs)
 
-        for club, captain in zip(clubs, captains):
-            teams[club].append(captain)
-
-        remaining = [p for p in queued_players if p not in captains]
-        random.shuffle(remaining)
-
-        index = 0
-        while remaining:
-            club = clubs[index % team_count]
-            teams[club].append(remaining.pop(0))
-            index += 1
-
-        category = discord.utils.get(
-            guild.categories,
-            name="In Progress"
-        )
+        category = discord.utils.get(guild.categories, name="In Progress")
 
         if category:
             for vc in category.voice_channels:
@@ -79,10 +94,7 @@ class Matchmaking(commands.Cog):
         else:
             category = await guild.create_category("In Progress")
 
-        captain_role = discord.utils.get(
-            guild.roles,
-            name="👑 Captain"
-        )
+        captain_role = discord.utils.get(guild.roles, name="👑 Captain")
 
         if captain_role is None:
             captain_role = await guild.create_role(
@@ -90,72 +102,37 @@ class Matchmaking(commands.Cog):
                 colour=discord.Colour.gold()
             )
 
-        vcs = {}
+        voice_channels = {}
 
-        for club in clubs:
-
-            overwrites = {
-                guild.default_role:
-                    discord.PermissionOverwrite(connect=False)
-            }
-
-            overwrites[captain_role] = discord.PermissionOverwrite(
-                connect=True,
-                speak=True,
-                view_channel=True
-            )
+        for team in teams:
 
             vc = await guild.create_voice_channel(
-                club,
-                category=category,
-                overwrites=overwrites
+                team["club"],
+                category=category
             )
 
-            vcs[club] = vc
+            voice_channels[team["club"]] = vc
 
-        for club, members in teams.items():
+        # Text channels
 
-            vc = vcs[club]
+        async def ensure(name):
 
-            for member_id in members:
-
-                member = guild.get_member(member_id)
-
-                if member is None:
-                    continue
-
-                await vc.set_permissions(
-                    member,
-                    connect=True,
-                    speak=True,
-                    view_channel=True
-                )
-
-                if member_id in captains:
-                    await member.add_roles(captain_role)
-
-                if member.voice:
-                    try:
-                        await member.move_to(vc)
-                    except:
-                        pass
-
-        def ensure_channel(name):
             existing = discord.utils.get(
                 guild.text_channels,
                 name=name
             )
-            return existing
 
-        session_live = ensure_channel("session-live")
-        next_round = ensure_channel("next-round")
-        control = ensure_channel("session-control")
+            if existing:
+                return existing
 
-        if session_live is None:
-            session_live = await guild.create_text_channel("session-live")
+            return await guild.create_text_channel(name)
 
-        if next_round is None:
-            next_round = await guild.create_text_channel("next-round")
+        live = await ensure("in-progress")
+
+        control = discord.utils.get(
+            guild.text_channels,
+            name="session-control"
+        )
 
         if control is None:
 
@@ -176,56 +153,112 @@ class Matchmaking(commands.Cog):
                 overwrites=overwrites
             )
 
+        # Give permissions
+
+        for team in teams:
+
+            vc = voice_channels[team["club"]]
+
+            for i, player in enumerate(team["players"]):
+
+                member = guild.get_member(player["id"])
+
+                if member is None:
+                    continue
+
+                await vc.set_permissions(
+                    member,
+                    connect=True,
+                    speak=True,
+                    view_channel=True
+                )
+
+                if i == 0:
+                    await member.add_roles(captain_role)
+
+                if member.voice:
+                    try:
+                        await member.move_to(vc)
+                    except:
+                        pass
+
+        # Fixtures
+
+        if mode == "4team":
+
+            fixtures = [
+                (clubs[0], clubs[1]),
+                (clubs[2], clubs[3])
+            ]
+
+        else:
+
+            fixtures = [
+                (clubs[0], clubs[1])
+            ]
+
+        # Live Hub
+
         embed = discord.Embed(
             title="⚽ NTF Session",
-            description="Teams have entered the pitch.",
+            description=f"**{'League Mode' if mode=='4team' else 'Rivals Mode'}**",
             colour=0x2EC4FF
         )
 
-        for club, members in teams.items():
+        for team in teams:
 
             text = ""
 
-            for i, member_id in enumerate(members):
+            for i, player in enumerate(team["players"]):
 
-                member = guild.get_member(member_id)
+                member = guild.get_member(player["id"])
 
                 if member is None:
                     continue
 
                 if i == 0:
-                    text += f"👑 {member.mention}\n"
+                    text += f"👑 {member.display_name}\n"
                 else:
-                    text += f"• {member.mention}\n"
+                    text += f"• {member.display_name}\n"
 
             embed.add_field(
-                name=club,
+                name=f"{team['club']} • {len(team['players'])}/6",
                 value=text,
                 inline=False
             )
 
-        await session_live.send(embed=embed)
+        fixture_text = "\n".join(
+            f"⚽ {a} vs {b}"
+            for a, b in fixtures
+        )
 
-        if mode == "4team":
+        embed.add_field(
+            name="Current Fixtures",
+            value=fixture_text,
+            inline=False
+        )
 
-            fixtures = (
-                f"## Round 1\n"
-                f"🔷 {clubs[0]} vs {clubs[1]}\n"
-                f"🟢 {clubs[2]} vs {clubs[3]}"
-            )
+        standing_text = "\n".join(
+            f"{club} — 0"
+            for club in clubs
+        )
 
-        else:
+        embed.add_field(
+            name="Standings",
+            value=standing_text,
+            inline=False
+        )
 
-            fixtures = (
-                f"## Rivals Match\n"
-                f"{clubs[0]} vs {clubs[1]}"
-            )
+        embed.add_field(
+            name="🪑 Bench",
+            value="0/4 Slots Used",
+            inline=False
+        )
 
-        await next_round.send(fixtures)
+        await live.send(embed=embed)
 
         await control.send(
-            "⚙️ Session Control\n"
-            "Winner buttons arrive in V3.3."
+            "⚙️ Session created.\nWinner buttons arrive in the next update."
         )
 
 async def setup(bot):
