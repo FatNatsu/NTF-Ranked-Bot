@@ -154,7 +154,7 @@ class Session(commands.Cog):
         teams,
         category,
         control_channel,
-        voice_channels,
+        voice_channels
     ):
 
         # Permanent in-progress channel
@@ -176,25 +176,13 @@ class Session(commands.Cog):
             "results": [],
             "submitted": set(),
             "category": category,
-            "control_channel": control_channel,
             "progress_channel": progress_channel,
+            "control_channel": control_channel,
             "voice_channels": voice_channels,
             "bench": [],
+            "progress_message": None,
+            "control_message": None
         }
-
-        session = self.sessions[guild.id]
-
-        progress_message = await progress_channel.send(
-            embed=self.build_progress_embed(session)
-        )
-
-        control_message = await control_channel.send(
-            f"## 🏆 {session_code} • Round 1",
-            view=SessionControl(self, guild.id)
-        )
-
-        session["progress_message"] = progress_message
-        session["control_message"] = control_message
 
         # Clear previous bot messages
         try:
@@ -216,118 +204,118 @@ class Session(commands.Cog):
         self.sessions[guild.id]["progress_message"] = progress_message
         self.sessions[guild.id]["control_message"] = control_message
 
-# ---------------- LIVE EMBED ----------------
+    # ---------------- LIVE EMBED ----------------
 
-def build_progress_embed(self, session):
+    def build_progress_embed(self, session):
 
-embed = discord.Embed(
-title=f"⚽ {session['code']}",
-description=f"{session['mode']} • Round {min(session['round'],3)}",
-colour=0x2EC4FF
-)
+        embed = discord.Embed(
+            title=f"⚽ {session['code']}",
+            description=f"**{session['mode']} • Round {min(session['round'],3)}**",
+            colour=0x2EC4FF
+        )
 
-teams = list(session["teams"].keys())
+        teams = list(session["teams"].keys())
 
-# Live Fixtures
-if session["round"] <= 3:
+        # Live Fixtures
+        if session["round"] <= 3:
 
-fixtures = ""
+            fixtures = ""
 
-for i, (a, b) in enumerate(
-ROUND_SCHEDULE[session["round"]],
-start=1
-):
+            for i, (a, b) in enumerate(
+                ROUND_SCHEDULE[session["round"]],
+                start=1
+            ):
 
-fixtures += (
-f"## ⚔️ Match {i}\n"
-f"{TEAM_EMOJIS.get(teams[a],'⚽')} {teams[a]}\n"
-f"VS\n"
-f"{TEAM_EMOJIS.get(teams[b],'⚽')} {teams[b]}\n\n"
-)
+                fixtures += (
+                    f"## ⚔️ Match {i}\n"
+                    f"{TEAM_EMOJIS.get(teams[a],'⚽')} **{teams[a]}**\n"
+                    f"**VS**\n"
+                    f"{TEAM_EMOJIS.get(teams[b],'⚽')} **{teams[b]}**\n\n"
+                )
 
-embed.add_field(
-name="🎮 LIVE FIXTURES",
-value=fixtures,
-inline=False
-)
+            embed.add_field(
+                name="🎮 LIVE FIXTURES",
+                value=fixtures,
+                inline=False
+            )
 
-standings = {t: {"W": 0, "L": 0} for t in teams}
+        standings = {t: {"W": 0, "L": 0} for t in teams}
 
-completed = ""
+        completed = ""
 
-for result in session["results"]:
+        for result in session["results"]:
 
-if result["winner"] == "A":
-winner = result["team_a"]
-loser = result["team_b"]
-else:
-winner = result["team_b"]
-loser = result["team_a"]
+            if result["winner"] == "A":
+                winner = result["team_a"]
+                loser = result["team_b"]
+            else:
+                winner = result["team_b"]
+                loser = result["team_a"]
 
-standings[winner]["W"] += 1
-standings[loser]["L"] += 1
+            standings[winner]["W"] += 1
+            standings[loser]["L"] += 1
 
-completed += (
-f"Round {result['round']}\n"
-f"{TEAM_EMOJIS.get(winner,'⚽')} {winner} defeated "
-f"{TEAM_EMOJIS.get(loser,'⚽')} {loser}\n\n"
-)
+            completed += (
+                f"**Round {result['round']}**\n"
+                f"{TEAM_EMOJIS.get(winner,'⚽')} **{winner}** defeated "
+                f"{TEAM_EMOJIS.get(loser,'⚽')} {loser}\n\n"
+            )
 
-if completed:
-embed.add_field(
-name="✅ COMPLETED MATCHES",
-value=completed,
-inline=False
-)
+        if completed:
+            embed.add_field(
+                name="✅ COMPLETED MATCHES",
+                value=completed,
+                inline=False
+            )
 
-# Team Cards
-for team in teams:
+        # Team Cards
+        for team in teams:
 
-captain = session["teams"][team]["captain"]
-players = session["teams"][team]["players"]
+            captain = session["teams"][team]["captain"]
+            players = session["teams"][team]["players"]
 
-text = ""
+            text = ""
 
-if captain:
-text += f"👑 <@{captain}>\n"
+            if captain:
+                text += f"👑 <@{captain}>\n"
 
-for player in players:
-if player != captain:
-text += f"• <@{player}>\n"
+            for player in players:
+                if player != captain:
+                    text += f"• <@{player}>\n"
 
-text += f"\n🏆 {standings[team]['W']}W-{standings[team]['L']}L"
+            text += f"\n🏆 **{standings[team]['W']}W-{standings[team]['L']}L**"
 
-embed.add_field(
-name=f"{TEAM_EMOJIS.get(team,'⚽')} {team} ({len(players)}/6)",
-value=text if text else "Empty",
-inline=False
-)
+            embed.add_field(
+                name=f"{TEAM_EMOJIS.get(team,'⚽')} {team} ({len(players)}/6)",
+                value=text if text else "Empty",
+                inline=False
+            )
 
-bench = (
-"\n".join(f"• <@{x}>" for x in session["bench"])
-if session["bench"]
-else "No substitutes."
-)
+        bench = (
+            "\n".join(f"• <@{x}>" for x in session["bench"])
+            if session["bench"]
+            else "No substitutes."
+        )
 
-embed.add_field(
-name=f"🪑 Shared Bench ({len(session['bench'])}/4)",
-value=bench,
-inline=False
-)
+        embed.add_field(
+            name=f"🪑 Shared Bench ({len(session['bench'])}/4)",
+            value=bench,
+            inline=False
+        )
 
-embed.set_footer(
-text="Live updates after every submitted result."
-)
+        embed.set_footer(
+            text="Live updates after every submitted result."
+        )
 
-return embed
+        return embed
 
-async def update_progress(self, guild_id):
+    async def update_progress(self, guild_id):
 
-session = self.sessions[guild_id]
+        session = self.sessions[guild_id]
 
-await session["progress_message"].edit(
-embed=self.build_progress_embed(session)
-)
+        await session["progress_message"].edit(
+            embed=self.build_progress_embed(session)
+        )
 # ---------------- FINISH ----------------
 
 async def finish_session(self, guild_id):
