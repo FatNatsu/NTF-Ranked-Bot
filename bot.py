@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TOKEN = os.environ.get("TOKEN")
+TOKEN = os.getenv("TOKEN")
 
 intents = discord.Intents.default()
 intents.members = True
@@ -15,9 +15,11 @@ intents.message_content = True
 
 class NTFBot(commands.Bot):
     async def setup_hook(self):
+        # Only load the setup cog for now
         await self.load_extension("cogs.setup")
+
         synced = await self.tree.sync()
-        print(f"Synced {len(synced)} commands.")
+        print(f"Synced {len(synced)} command(s).")
 
 bot = NTFBot(command_prefix="!", intents=intents)
 
