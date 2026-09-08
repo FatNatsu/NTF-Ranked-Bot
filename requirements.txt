@@ -1,5 +1,5 @@
-discord.py==2.4.0
-aiosqlite
-python-dotenv
-apscheduler
-loguru
+discord.py>=2.5.2
+python-dotenv==1.0.1
+aiosqlite==0.20.0
+apscheduler==3.10.4
+loguru==0.7.2
