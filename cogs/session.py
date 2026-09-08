@@ -157,27 +157,45 @@ class Session(commands.Cog):
         voice_channels,
     ):
 
-# Permanent in-progress channel
-progress_channel = discord.utils.get(
-guild.text_channels,
-name="in-progress"
-)
+        # Permanent in-progress channel
+        progress_channel = discord.utils.get(
+            guild.text_channels,
+            name="in-progress"
+        )
 
-if progress_channel is None:
-progress_channel = await guild.create_text_channel(
-"in-progress"
-)
+        if progress_channel is None:
+            progress_channel = await guild.create_text_channel(
+                "in-progress"
+            )
 
-self.sessions[guild.id] = {
-"code": session_code,
-"mode": mode,
-"round": 1,
-"teams": teams,
-"results": [],
-"submitted": set(),
-"category": category,
-"progress_channel": progress_channel,
-"control_channel": control_channel,
+        self.sessions[guild.id] = {
+            "code": session_code,
+            "mode": mode,
+            "round": 1,
+            "teams": teams,
+            "results": [],
+            "submitted": set(),
+            "category": category,
+            "control_channel": control_channel,
+            "progress_channel": progress_channel,
+            "voice_channels": voice_channels,
+            "bench": [],
+        }
+
+        session = self.sessions[guild.id]
+
+        progress_message = await progress_channel.send(
+            embed=self.build_progress_embed(session)
+        )
+
+        control_message = await control_channel.send(
+            f"## 🏆 {session_code} • Round 1",
+            view=SessionControl(self, guild.id)
+        )
+
+        session["progress_message"] = progress_message
+        session["control_message"] = control_message
+
 "voice_channels": voice_channels,
 "bench": [],
 "progress_message": None,
