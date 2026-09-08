@@ -1,220 +1,141 @@
-import math
 import aiosqlite
+import math
 
 DB_NAME = "ntf.db"
 
+# ---------- Database ----------
 
-# -------------------------
-# Rating helpers
-# -------------------------
+async def get_player_mmr(user_id):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cur = await db.execute(
+            "SELECT mmr FROM players WHERE user_id=?",
+            (user_id,)
+        )
+        row = await cur.fetchone()
 
-def get_rating(mmr: int):
-    if mmr >= 2500:
-        return "S+"
-    if mmr >= 2200:
-        return "S"
-    if mmr >= 1900:
-        return "A+"
-    if mmr >= 1600:
-        return "A"
-    if mmr >= 1300:
-        return "B+"
-    if mmr >= 1000:
-        return "B"
-    if mmr >= 700:
-        return "C+"
-    if mmr >= 400:
-        return "C"
-    if mmr >= 200:
-        return "D"
-    return "E"
+        if row:
+            return row[0]
+
+        await db.execute(
+            "INSERT OR IGNORE INTO players(user_id, mmr) VALUES(?,?)",
+            (user_id, 100)
+        )
+        await db.commit()
+
+        return 100
 
 
-# -------------------------
-# Base gain/loss values
-# -------------------------
-
-def get_base_values(avg_mmr):
-
-    if avg_mmr >= 2500:
-        return (12, 20)
-
-    if avg_mmr >= 2200:
-        return (14, 16)
-
-    if avg_mmr >= 1900:
-        return (16, 13)
-
-    if avg_mmr >= 1600:
-        return (18, 12)
-
-    if avg_mmr >= 1300:
-        return (20, 10)
-
-    if avg_mmr >= 1000:
-        return (22, 11)
-
-    if avg_mmr >= 700:
-        return (24, 12)
-
-    if avg_mmr >= 400:
-        return (28, 14)
-
-    if avg_mmr >= 200:
-        return (32, 16)
-
-    return (36, 18)
-
-
-# -------------------------
-# Team average
-# -------------------------
-
-async def get_team_average(players):
+async def update_player_mmr(user_id, change):
+    current = await get_player_mmr(user_id)
+    new = max(100, round(current + change))
 
     async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "UPDATE players SET mmr=? WHERE user_id=?",
+            (new, user_id)
+        )
+        await db.commit()
 
-        total = 0
+    return new
 
-        for player in players:
 
-            cur = await db.execute(
-                "SELECT mmr FROM players WHERE user_id=?",
-                (player,)
-            )
+# ---------- Team Helpers ----------
 
-            row = await cur.fetchone()
+async def get_team_average(team):
+    players = team["players"]
 
-            total += row[0] if row else 100
+    # Prevent crashes while testing with empty teams
+    if not players:
+        return 100
+
+    total = 0
+
+    for player in players:
+        total += await get_player_mmr(player)
 
     return total / len(players)
 
 
-# -------------------------
-# Elo expectation
-# -------------------------
-
-def expected_score(a_avg, b_avg):
-
-    return 1 / (1 + 10 ** ((b_avg - a_avg) / 400))
+def expected_score(a, b):
+    return 1 / (1 + math.pow(10, (b - a) / 400))
 
 
-# -------------------------
-# Calculate one match
-# -------------------------
+def get_win_gain(avg):
+    if avg >= 2200:
+        return 20
+    if avg >= 1600:
+        return 22
+    return 24
+
+
+def get_loss_penalty(avg):
+    if avg >= 2500:
+        return -20
+    if avg >= 2200:
+        return -16
+    if avg >= 1600:
+        return -12
+    if avg >= 1000:
+        return -10
+    return -8
+
+
+# ---------- Match Calculation ----------
 
 async def calculate_match(team_a, team_b, winner):
 
     avg_a = await get_team_average(team_a)
     avg_b = await get_team_average(team_b)
 
-    win_gain, win_loss = get_base_values((avg_a + avg_b) / 2)
-
     expected_a = expected_score(avg_a, avg_b)
     expected_b = expected_score(avg_b, avg_a)
 
+    gain_a = get_win_gain(avg_a)
+    gain_b = get_win_gain(avg_b)
+
+    loss_a = get_loss_penalty(avg_a)
+    loss_b = get_loss_penalty(avg_b)
+
     if winner == "A":
+        a_change = round(gain_a * (1 - expected_a))
+        b_change = round(loss_b * expected_b)
+    else:
+        b_change = round(gain_b * (1 - expected_b))
+        a_change = round(loss_a * expected_a)
 
-        gain = round(win_gain + (1 - expected_a) * 10)
-        loss = round(win_loss + expected_b * 4)
-
-        return gain, -loss
-
-    gain = round(win_gain + (1 - expected_b) * 10)
-    loss = round(win_loss + expected_a * 4)
-
-    return -loss, gain
+    return a_change, b_change
 
 
-# -------------------------
-# Apply league session
-# -------------------------
+# ---------- League Session ----------
 
 async def apply_league_session(session):
 
+    teams = session["teams"]
+
     changes = {}
 
-    for match in session["results"]:
+    for team in teams.values():
+        for player in team["players"]:
+            changes[player] = 0
 
-        team_a = session["teams"][match["team_a"]]["players"]
-        team_b = session["teams"][match["team_b"]]["players"]
+    for result in session["results"]:
+
+        team_a = teams[result["team_a"]]
+        team_b = teams[result["team_b"]]
 
         a_change, b_change = await calculate_match(
             team_a,
             team_b,
-            match["winner"]
+            result["winner"]
         )
 
-        for player in team_a:
-            changes[player] = changes.get(player, 0) + a_change
+        for player in team_a["players"]:
+            changes[player] += a_change
 
-        for player in team_b:
-            changes[player] = changes.get(player, 0) + b_change
+        for player in team_b["players"]:
+            changes[player] += b_change
 
-    async with aiosqlite.connect(DB_NAME) as db:
-
-        for player, change in changes.items():
-
-            change = max(-35, min(90, change))
-
-            cur = await db.execute(
-                "SELECT mmr,wins,losses,games_played FROM players WHERE user_id=?",
-                (player,)
-            )
-
-            row = await cur.fetchone()
-
-            if row:
-                mmr, wins, losses, games = row
-            else:
-                mmr, wins, losses, games = (100, 0, 0, 0)
-
-            new_mmr = max(100, mmr + change)
-
-            result = "W" if change >= 0 else "L"
-
-            if result == "W":
-                wins += 1
-            else:
-                losses += 1
-
-            games += 1
-
-            await db.execute("""
-            INSERT OR REPLACE INTO players
-            (user_id,mmr,wins,losses,games_played)
-            VALUES(?,?,?,?,?)
-            """, (
-                player,
-                new_mmr,
-                wins,
-                losses,
-                games
-            ))
-
-            await db.execute("""
-            INSERT INTO recent_form(user_id,result)
-            VALUES(?,?)
-            """, (
-                player,
-                result
-            ))
-
-            await db.execute("""
-            DELETE FROM recent_form
-            WHERE rowid NOT IN(
-                SELECT rowid
-                FROM recent_form
-                WHERE user_id=?
-                ORDER BY timestamp DESC
-                LIMIT 5
-            )
-            AND user_id=?
-            """, (
-                player,
-                player
-            ))
-
-        await db.commit()
+    for player, change in changes.items():
+        await update_player_mmr(player, change)
 
     return changes
