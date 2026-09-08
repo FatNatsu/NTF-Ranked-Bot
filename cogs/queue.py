@@ -14,36 +14,35 @@ READY_ACTIVE = False
 def queue_embed():
     embed = discord.Embed(
         title="⚽ NTF Queue",
-        description="**The next kick-off begins when 24 players step onto the pitch.**",
+        description="The next kick-off begins when 24 players step onto the pitch.",
         colour=0x2EC4FF
     )
 
     embed.add_field(
-        name="🏟️ Players on the Pitch",
-        value=f"**{len(QUEUE)}/{QUEUE_SIZE}**",
+        name="Players on the Pitch",
+        value=f"{len(QUEUE)}/{QUEUE_SIZE}",
         inline=True
     )
 
     embed.add_field(
-        name="⚡ Status",
+        name="Status",
         value="Open" if len(QUEUE) < QUEUE_SIZE else "Ready Check",
         inline=True
     )
 
     embed.add_field(
-        name="🏆 Club Rotation",
+        name="Club Rotation",
         value=(
-            "🔷 Fram Esports\n"
-            "🟣 The Fifth Pass\n"
-            "🟢 Warya Wonders\n"
-            "🟡 Delectable XI\n"
-            "🔵 Joyboi"
+            "Fram Esports\n"
+            "The Fifth Pass\n"
+            "Warya Wonders\n"
+            "Delectable XI\n"
+            "Joyboi"
         ),
         inline=False
     )
 
     embed.set_footer(text="NTF • Enter the Pitch")
-
     return embed
 
 
@@ -51,25 +50,47 @@ class ReadyView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=READY_TIMEOUT)
 
-    @discord.ui.button(
-        label="Accept",
-        style=discord.ButtonStyle.success,
-        emoji="✅"
-    )
+    @discord.ui.button(label="Accept", style=discord.ButtonStyle.success, emoji="✅")
     async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
-
         if interaction.user.id in QUEUE:
             READY.add(interaction.user.id)
+        await interaction.response.send_message("You're locked in.", ephemeral=True)
 
-        await interaction.response.send_message(
-            "You're locked in.",
-            ephemeral=True
-            "NTF Queue panel created.",
-            ephemeral=True
-        )
+
+class QueueView(discord.ui.View):
+    def __init__(self, cog):
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    @discord.ui.button(label="Join Queue", style=discord.ButtonStyle.success, emoji="⚽")
+    async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id not in QUEUE:
+            QUEUE.append(interaction.user.id)
+
+        await interaction.response.edit_message(embed=queue_embed(), view=self)
+
+        if len(QUEUE) == QUEUE_SIZE:
+            await self.cog.start_ready_check(interaction.channel)
+
+    @discord.ui.button(label="Leave Queue", style=discord.ButtonStyle.danger, emoji="❌")
+    async def leave(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id in QUEUE:
+            QUEUE.remove(interaction.user.id)
+
+        await interaction.response.edit_message(embed=queue_embed(), view=self)
+
+
+class Queue(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    @app_commands.command(name="queue", description="Post the NTF Queue panel.")
+    @app_commands.default_permissions(administrator=True)
+    async def queue(self, interaction: discord.Interaction):
+        await interaction.channel.send(embed=queue_embed(), view=QueueView(self))
+        await interaction.response.send_message("NTF Queue panel created.", ephemeral=True)
 
     async def start_ready_check(self, channel):
-
         global READY_ACTIVE
 
         if READY_ACTIVE:
@@ -79,7 +100,7 @@ class ReadyView(discord.ui.View):
         READY.clear()
 
         await channel.send(
-            "**⚽ MATCH FOUND!**\n\nEvery player has **30 seconds** to accept.",
+            "## ⚽ MATCH FOUND!\nEveryone has 30 seconds to accept.",
             view=ReadyView()
         )
 
@@ -94,14 +115,11 @@ class ReadyView(discord.ui.View):
 
         if failed:
             mentions = " ".join(f"<@{player}>" for player in failed)
-
             await channel.send(
-                f"{mentions} didn't accept.\n\nQueue reset to **{len(QUEUE)}/{QUEUE_SIZE}**."
+                f"{mentions} didn't accept.\nQueue is now {len(QUEUE)}/{QUEUE_SIZE}."
             )
         else:
-            await channel.send(
-                "🔥 Everyone accepted. Building teams..."
-            )
+            await channel.send("🔥 Everyone accepted. Building teams...")
 
 
 async def setup(bot):
