@@ -316,127 +316,127 @@ class Session(commands.Cog):
         await session["progress_message"].edit(
             embed=self.build_progress_embed(session)
         )
-# ---------------- FINISH ----------------
+    # ---------------- FINISH ----------------
 
-async def finish_session(self, guild_id):
+    async def finish_session(self, guild_id):
 
-session = self.sessions[guild_id]
+        session = self.sessions[guild_id]
 
-changes = await apply_league_session(session)
+        changes = await apply_league_session(session)
 
-standings = {team: 0 for team in session["teams"]}
+        standings = {team: 0 for team in session["teams"]}
 
-for result in session["results"]:
-if result["winner"] == "A":
-standings[result["team_a"]] += 1
-else:
-standings[result["team_b"]] += 1
+        for result in session["results"]:
+            if result["winner"] == "A":
+                standings[result["team_a"]] += 1
+            else:
+                standings[result["team_b"]] += 1
 
-ranking = sorted(
-standings.items(),
-key=lambda x: x[1],
-reverse=True
-)
+        ranking = sorted(
+            standings.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
 
-medals = ["🥇", "🥈", "🥉", "4️⃣"]
+        medals = ["🥇", "🥈", "🥉", "4️⃣"]
 
-final_embed = discord.Embed(
-title=f"🏆 {session['code']} Complete",
-description="Final Standings",
-colour=0xFFD700
-)
+        final_embed = discord.Embed(
+            title=f"🏆 {session['code']} Complete",
+            description="**Final Standings**",
+            colour=0xFFD700
+        )
 
-for i, (team, wins) in enumerate(ranking):
+        for i, (team, wins) in enumerate(ranking):
 
-losses = 3 - wins
-players = session["teams"][team]["players"]
+            losses = 3 - wins
+            players = session["teams"][team]["players"]
 
-avg = 0
-if players:
-avg = round(sum(changes[p] for p in players) / len(players))
+            avg = 0
+            if players:
+                avg = round(sum(changes[p] for p in players) / len(players))
 
-final_embed.add_field(
-name=f"{medals[i]} {TEAM_EMOJIS.get(team,'⚽')} {team}",
-value=f"{wins}W-{losses}L\nMMR {avg:+}",
-inline=False
-)
+            final_embed.add_field(
+                name=f"{medals[i]} {TEAM_EMOJIS.get(team,'⚽')} {team}",
+                value=f"**{wins}W-{losses}L**\nMMR {avg:+}",
+                inline=False
+            )
 
-# Replace the live tracker with the final standings
-await session["progress_message"].edit(embed=final_embed)
+        # Replace the live tracker with the final standings
+        await session["progress_message"].edit(embed=final_embed)
 
-countdown = await session["progress_channel"].send(
-"## ⏳ Session closing in 60 seconds..."
-)
+        countdown = await session["progress_channel"].send(
+            "## ⏳ Session closing in **60 seconds**..."
+        )
 
-# Live countdown
-for remaining in [50, 40, 30, 20, 10]:
-await asyncio.sleep(10)
-await countdown.edit(
-content=f"## ⏳ Session closing in {remaining} seconds..."
-)
+        # Live countdown
+        for remaining in [50, 40, 30, 20, 10]:
+            await asyncio.sleep(10)
+            await countdown.edit(
+                content=f"## ⏳ Session closing in **{remaining} seconds**..."
+            )
 
-await asyncio.sleep(10)
+        await asyncio.sleep(10)
 
-# Reset in-progress to idle state
-idle_embed = discord.Embed(
-title="⚽ NTF In Progress",
-description="No session is currently active.",
-colour=0x2EC4FF
-)
+        # Reset in-progress to idle state
+        idle_embed = discord.Embed(
+            title="⚽ NTF In Progress",
+            description="**No session is currently active.**",
+            colour=0x2EC4FF
+        )
 
-idle_embed.add_field(
-name="Queue",
-value="Use /queue join when a queue is open.",
-inline=False
-)
+        idle_embed.add_field(
+            name="Queue",
+            value="Use `/queue join` when a queue is open.",
+            inline=False
+        )
 
-await session["progress_message"].edit(embed=idle_embed)
+        await session["progress_message"].edit(embed=idle_embed)
 
-try:
-await countdown.delete()
-except:
-pass
+        try:
+            await countdown.delete()
+        except:
+            pass
 
-await self.cleanup_session(guild_id)
+        await self.cleanup_session(guild_id)
 
-# ---------------- CLEANUP ----------------
+    # ---------------- CLEANUP ----------------
 
-async def cleanup_session(self, guild_id):
+    async def cleanup_session(self, guild_id):
 
-session = self.sessions[guild_id]
+        session = self.sessions[guild_id]
 
-# Delete team voice channels
-for vc in session["voice_channels"]:
-try:
-await vc.delete()
-except:
-pass
+        # Delete team voice channels
+        for vc in session["voice_channels"]:
+            try:
+                await vc.delete()
+            except:
+                pass
 
-# Delete session-control only
-try:
-await session["control_channel"].delete()
-except:
-pass
+        # Delete session-control only
+        try:
+            await session["control_channel"].delete()
+        except:
+            pass
 
-# Delete temporary category
-try:
-await session["category"].delete()
-except:
-pass
+        # Delete temporary category
+        try:
+            await session["category"].delete()
+        except:
+            pass
 
-# Reset queue
-queue = self.bot.get_cog("Queue")
+        # Reset queue
+        queue = self.bot.get_cog("Queue")
 
-if queue:
-queue.queue.clear()
-queue.queue_open = False
+        if queue:
+            queue.queue.clear()
+            queue.queue_open = False
 
-try:
-await queue.update_queue_message()
-except:
-pass
+            try:
+                await queue.update_queue_message()
+            except:
+                pass
 
-del self.sessions[guild_id]
+        del self.sessions[guild_id]
 # ---------------- COMMANDS ----------------
 
 @app_commands.command(
