@@ -27,3 +27,7 @@ async def on_ready():
     print(f"✅ {bot.user} is online.")
 
 bot.run(os.getenv("TOKEN"))
+if token is None:
+    raise RuntimeError("TOKEN environment variable not found.")
+
+bot.run(token)
