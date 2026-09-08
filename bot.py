@@ -3,6 +3,8 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
+from database.db import init_db
+
 load_dotenv()
 
 TOKEN = os.getenv("TOKEN")
@@ -17,6 +19,8 @@ intents.message_content = True
 class NTFBot(commands.Bot):
 
     async def setup_hook(self):
+
+        await init_db()
 
         await self.load_extension("cogs.setup")
         await self.load_extension("cogs.queue")
