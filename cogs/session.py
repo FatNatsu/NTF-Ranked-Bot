@@ -1,97 +1,73 @@
-from dataclasses import dataclass, field
-from typing import Dict, List
-import random
 import discord
 from discord.ext import commands
-
-@dataclass
-class SessionData:
-    session_id: int
-    mode: str
-    teams: Dict[str, List[int]]
-    captains: Dict[str, int]
-    round: int = 1
-    standings: Dict[str, int] = field(default_factory=dict)
 
 class Session(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.session_counter = 1
-        self.active_session = None
+        self.active = None
 
-    def create_session(
-        self,
-        mode,
-        clubs,
-        captains,
-        players
-    ):
+    def start_league(self, clubs):
+        self.active = {
+            "mode": "4team",
+            "round": 1,
+            "clubs": clubs,
+            "standings": {club: 0 for club in clubs},
+            "fixtures": {
+                1: [(clubs[0], clubs[1]), (clubs[2], clubs[3])],
+                2: [(clubs[0], clubs[2]), (clubs[1], clubs[3])],
+                3: [(clubs[0], clubs[3]), (clubs[1], clubs[2])]
+            },
+            "played": []
+        }
 
-        teams = {club: [] for club in clubs}
+    def start_rivals(self, clubs):
+        self.active = {
+            "mode": "2team",
+            "clubs": clubs,
+            "standings": {club: 0 for club in clubs},
+            "played": []
+        }
 
-        for club, captain in zip(clubs, captains):
-            teams[club].append(captain)
+    async def post_round(self, channel):
+        if not self.active:
+            return
 
-        remaining = [p for p in players if p not in captains]
-        random.shuffle(remaining)
+        if self.active["mode"] == "4team":
+            r = self.active["round"]
+            games = self.active["fixtures"][r]
 
-        i = 0
-        while remaining:
-            club = clubs[i % len(clubs)]
-            teams[club].append(remaining.pop(0))
-            i += 1
+            embed = discord.Embed(
+                title=f"⚽ Round {r}",
+                colour=0x2EC4FF
+            )
 
-        standings = {club: 0 for club in clubs}
+            embed.description = (
+                f"**{games[0][0]} vs {games[0][1]}**\n"
+                f"**{games[1][0]} vs {games[1][1]}**"
+            )
 
-        self.active_session = SessionData(
-            session_id=self.session_counter,
-            mode=mode,
-            teams=teams,
-            captains=dict(zip(clubs, captains)),
-            standings=standings
-        )
+            await channel.send(embed=embed)
 
-        self.session_counter += 1
-
-        return self.active_session
-
-    async def announce_session(
-        self,
-        guild,
-        channel
-    ):
-
-        session = self.active_session
-
+    async def standings_embed(self):
         embed = discord.Embed(
-            title=f"⚽ NTF Session #{session.session_id}",
-            description=f"**{session.mode}**",
+            title="🏆 Live Standings",
             colour=0x2EC4FF
         )
 
-        for club, members in session.teams.items():
+        ordered = sorted(
+            self.active["standings"].items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
 
-            text = ""
+        text = ""
 
-            for i, member_id in enumerate(members):
+        for club, points in ordered:
+            text += f"**{club}** — {points} pts\n"
 
-                member = guild.get_member(member_id)
+        embed.description = text
 
-                if not member:
-                    continue
-
-                if i == 0:
-                    text += f"👑 {member.mention}\n"
-                else:
-                    text += f"• {member.mention}\n"
-
-            embed.add_field(
-                name=club,
-                value=text or "No players",
-                inline=False
-            )
-
-        await channel.send(embed=embed)
+        return embed
 
 async def setup(bot):
     await bot.add_cog(Session(bot))
