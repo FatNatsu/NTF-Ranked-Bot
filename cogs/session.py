@@ -133,10 +133,6 @@ class SessionControl(discord.ui.View):
 
 
 
-Taiyyab Hussain <xdtaiyyab420@gmail.com>
-17:02 (0 minutes ago)
-to me
-
 # ---------------- SESSION COG ----------------
 
 class Session(commands.Cog):
