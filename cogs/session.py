@@ -1,58 +1,194 @@
 import discord
 from discord.ext import commands
 
+class MatchView(discord.ui.View):
+    def __init__(self, session_cog):
+        super().__init__(timeout=None)
+        self.session = session_cog
+
+        self.refresh_buttons()
+
+    def refresh_buttons(self):
+        self.clear_items()
+
+        if not self.session.active:
+            return
+
+        games = self.session.current_games()
+
+        for team_a, team_b in games:
+
+            self.add_item(WinnerButton(self.session, team_a))
+            self.add_item(WinnerButton(self.session, team_b))
+
+class WinnerButton(discord.ui.Button):
+    def __init__(self, session, team):
+
+        super().__init__(
+            label=f"{team} Wins",
+            style=discord.ButtonStyle.success
+        )
+
+        self.session = session
+        self.team = team
+
+    async def callback(self, interaction: discord.Interaction):
+
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "Admins only.",
+                ephemeral=True
+            )
+            return
+
+        self.session.record_win(self.team)
+
+        await self.session.update_live_hub()
+
+        await interaction.response.defer()
+
+
 class Session(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.active = None
 
-    def start_league(self, clubs):
-        self.active = {
-            "mode": "4team",
-            "round": 1,
-            "clubs": clubs,
-            "standings": {club: 0 for club in clubs},
-            "fixtures": {
+        self.active = None
+        self.live_message = None
+        self.live_channel = None
+
+    def create(self, teams):
+
+        clubs = [t["club"] for t in teams]
+
+        fixtures = {}
+
+        if len(clubs) == 4:
+
+            fixtures = {
                 1: [(clubs[0], clubs[1]), (clubs[2], clubs[3])],
                 2: [(clubs[0], clubs[2]), (clubs[1], clubs[3])],
                 3: [(clubs[0], clubs[3]), (clubs[1], clubs[2])]
-            },
-            "played": []
-        }
+            }
 
-    def start_rivals(self, clubs):
+            mode = "League"
+
+        else:
+
+            fixtures = {
+                1: [(clubs[0], clubs[1])]
+            }
+
+            mode = "Rivals"
+
         self.active = {
-            "mode": "2team",
-            "clubs": clubs,
+            "mode": mode,
+            "round": 1,
+            "fixtures": fixtures,
+            "teams": teams,
             "standings": {club: 0 for club in clubs},
-            "played": []
+            "completed": []
         }
 
-    async def post_round(self, channel):
-        if not self.active:
+    def current_games(self):
+
+        return self.active["fixtures"][self.active["round"]]
+
+    def record_win(self, winner):
+
+        self.active["standings"][winner] += 1
+        self.active["completed"].append(winner)
+
+        needed = len(self.current_games())
+
+        if len(self.active["completed"]) == needed:
+
+            self.active["completed"] = []
+
+            if self.active["round"] < len(self.active["fixtures"]):
+                self.active["round"] += 1
+
+            else:
+                self.active["finished"] = True
+
+    async def create_live_hub(self, channel):
+
+        self.live_channel = channel
+
+        embed = self.build_embed()
+
+        self.live_message = await channel.send(
+            embed=embed,
+            view=MatchView(self)
+        )
+
+    async def update_live_hub(self):
+
+        if self.live_message is None:
             return
 
-        if self.active["mode"] == "4team":
-            r = self.active["round"]
-            games = self.active["fixtures"][r]
+        if self.active.get("finished"):
 
-            embed = discord.Embed(
-                title=f"⚽ Round {r}",
-                colour=0x2EC4FF
+            winner = max(
+                self.active["standings"],
+                key=self.active["standings"].get
             )
 
-            embed.description = (
-                f"**{games[0][0]} vs {games[0][1]}**\n"
-                f"**{games[1][0]} vs {games[1][1]}**"
+            embed = self.build_embed()
+
+            embed.title = "🏆 Session Complete"
+
+            embed.description = f"**Champions:** {winner}"
+
+            await self.live_message.edit(
+                embed=embed,
+                view=None
             )
 
-            await channel.send(embed=embed)
+            return
 
-    async def standings_embed(self):
+        await self.live_message.edit(
+            embed=self.build_embed(),
+            view=MatchView(self)
+        )
+
+    def build_embed(self):
+
         embed = discord.Embed(
-            title="🏆 Live Standings",
+            title=f"⚽ NTF {self.active['mode']} Session",
+            description=f"**Round {self.active['round']}**",
             colour=0x2EC4FF
         )
+
+        for team in self.active["teams"]:
+
+            text = ""
+
+            for i, player in enumerate(team["players"]):
+
+                if i == 0:
+                    text += f"👑 <@{player['id']}>\n"
+                else:
+                    text += f"• <@{player['id']}>\n"
+
+            embed.add_field(
+                name=f"{team['club']} • {len(team['players'])}/6",
+                value=text,
+                inline=False
+            )
+
+        fixtures = ""
+
+        for a, b in self.current_games():
+
+            fixtures += f"⚽ {a} vs {b}\n"
+
+        embed.add_field(
+            name="Current Matches",
+            value=fixtures,
+            inline=False
+        )
+
+        standings = ""
 
         ordered = sorted(
             self.active["standings"].items(),
@@ -60,14 +196,23 @@ class Session(commands.Cog):
             reverse=True
         )
 
-        text = ""
+        for club, pts in ordered:
+            standings += f"{club} — {pts}\n"
 
-        for club, points in ordered:
-            text += f"**{club}** — {points} pts\n"
+        embed.add_field(
+            name="Standings",
+            value=standings,
+            inline=False
+        )
 
-        embed.description = text
+        embed.add_field(
+            name="🪑 Bench",
+            value="0/4 Slots Used",
+            inline=False
+        )
 
         return embed
+
 
 async def setup(bot):
     await bot.add_cog(Session(bot))
