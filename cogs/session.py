@@ -23,82 +23,77 @@ TEAM_EMOJIS = {
 
 class ResultButton(discord.ui.Button):
 
-def init(self, cog, guild_id, match_index, label, winner, row):
-super().init(
-label=f"{label} Wins",
-style=discord.ButtonStyle.danger,
-row=row
-)
+    def __init__(self, cog, guild_id, match_index, label, winner, row):
+        super().__init__(
+            label=f"{label} Wins",
+            style=discord.ButtonStyle.danger,
+            row=row
+        )
 
-self.cog = cog
-self.guild_id = guild_id
-self.match_index = match_index
-self.winner = winner
+        self.cog = cog
+        self.guild_id = guild_id
+        self.match_index = match_index
+        self.winner = winner
 
-async def callback(self, interaction: discord.Interaction):
+    async def callback(self, interaction: discord.Interaction):
 
-if not interaction.user.guild_permissions.administrator:
-return await interaction.response.send_message(
-"Admins only.",
-ephemeral=True
-)
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message(
+                "Admins only.",
+                ephemeral=True
+            )
 
-await interaction.response.defer()
+        await interaction.response.defer()
 
-session = self.cog.sessions[self.guild_id]
+        session = self.cog.sessions[self.guild_id]
 
-if self.match_index in session["submitted"]:
-return
+        if self.match_index in session["submitted"]:
+            return
 
-pairings = ROUND_SCHEDULE[session["round"]]
-teams = list(session["teams"].keys())
+        pairings = ROUND_SCHEDULE[session["round"]]
+        teams = list(session["teams"].keys())
 
-a, b = pairings[self.match_index]
+        a, b = pairings[self.match_index]
 
-session["results"].append({
-"round": session["round"],
-"team_a": teams[a],
-"team_b": teams[b],
-"winner": self.winner
-})
+        session["results"].append({
+            "round": session["round"],
+            "team_a": teams[a],
+            "team_b": teams[b],
+            "winner": self.winner
+        })
 
-session["submitted"].add(self.match_index)
+        session["submitted"].add(self.match_index)
 
-# Lock only this match
-for item in self.view.children:
-if isinstance(item, ResultButton) and item.match_index == self.match_index:
-item.disabled = True
+        for item in self.view.children:
+            if isinstance(item, ResultButton) and item.match_index == self.match_index:
+                item.disabled = True
 
-if item.winner == self.winner:
-item.style = discord.ButtonStyle.success
-else:
-item.style = discord.ButtonStyle.secondary
+                if item.winner == self.winner:
+                    item.style = discord.ButtonStyle.success
+                else:
+                    item.style = discord.ButtonStyle.secondary
 
-await interaction.edit_original_response(view=self.view)
-await self.cog.update_progress(self.guild_id)
+        await interaction.edit_original_response(view=self.view)
+        await self.cog.update_progress(self.guild_id)
 
-# Wait until both matches are submitted
-if len(session["submitted"]) < len(pairings):
-return
+        if len(session["submitted"]) < len(pairings):
+            return
 
-session["submitted"].clear()
+        session["submitted"].clear()
 
-# Session finished
-if session["round"] == 3:
-return await self.cog.finish_session(self.guild_id)
+        if session["round"] == 3:
+            return await self.cog.finish_session(self.guild_id)
 
-# Next round
-session["round"] += 1
+        session["round"] += 1
 
-await session["control_message"].edit(
-content=f"## 🏆 {session['code']} • Round {session['round']}",
-view=SessionControl(self.cog, self.guild_id)
-)
+        await session["control_message"].edit(
+            content=f"## 🏆 {session['code']} • Round {session['round']}",
+            view=SessionControl(self.cog, self.guild_id)
+        )
 
-await self.cog.update_progress(self.guild_id)
-
-
----------------- SESSION CONTROL ----------------
+        await self.cog.update_progress(self.guild_id)
+      
+# ---------------- SESSION CONTROL ----------------
 
 class SessionControl(discord.ui.View):
 
@@ -135,7 +130,7 @@ row=match_index
 )
 
 
----------------- SESSION COG ----------------
+# ---------------- SESSION COG ----------------
 
 class Session(commands.Cog):
 
