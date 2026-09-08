@@ -1,36 +1,54 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 
-class MatchView(discord.ui.View):
-    def __init__(self, session_cog):
+from database.mmr import apply_league_session
+
+
+ROUND_SCHEDULE = {
+    1: [(0, 1), (2, 3)],
+    2: [(0, 2), (1, 3)],
+    3: [(0, 3), (1, 2)]
+}
+
+
+class SessionControl(discord.ui.View):
+    def __init__(self, cog, guild_id):
         super().__init__(timeout=None)
-        self.session = session_cog
-
+        self.cog = cog
+        self.guild_id = guild_id
         self.refresh_buttons()
 
     def refresh_buttons(self):
         self.clear_items()
 
-        if not self.session.active:
+        session = self.cog.sessions[self.guild_id]
+
+        if session["round"] > 3:
             return
 
-        games = self.session.current_games()
+        pairings = ROUND_SCHEDULE[session["round"]]
+        teams = list(session["teams"].keys())
 
-        for team_a, team_b in games:
+        for match_index, (a, b) in enumerate(pairings):
+            team_a = teams[a]
+            team_b = teams[b]
 
-            self.add_item(WinnerButton(self.session, team_a))
-            self.add_item(WinnerButton(self.session, team_b))
+            self.add_item(ResultButton(self.cog, self.guild_id, match_index, team_a, "A"))
+            self.add_item(ResultButton(self.cog, self.guild_id, match_index, team_b, "B"))
 
-class WinnerButton(discord.ui.Button):
-    def __init__(self, session, team):
 
+class ResultButton(discord.ui.Button):
+    def __init__(self, cog, guild_id, match_index, label, winner):
         super().__init__(
-            label=f"{team} Wins",
-            style=discord.ButtonStyle.success
+            label=f"{label} Win",
+            style=discord.ButtonStyle.primary
         )
 
-        self.session = session
-        self.team = team
+        self.cog = cog
+        self.guild_id = guild_id
+        self.match_index = match_index
+        self.winner = winner
 
     async def callback(self, interaction: discord.Interaction):
 
@@ -41,177 +59,260 @@ class WinnerButton(discord.ui.Button):
             )
             return
 
-        self.session.record_win(self.team)
+        session = self.cog.sessions[self.guild_id]
 
-        await self.session.update_live_hub()
+        if self.match_index in session["submitted"]:
+            await interaction.response.send_message(
+                "Winner already submitted.",
+                ephemeral=True
+            )
+            return
+
+        pairings = ROUND_SCHEDULE[session["round"]]
+        teams = list(session["teams"].keys())
+
+        a, b = pairings[self.match_index]
+
+        session["results"].append({
+            "team_a": teams[a],
+            "team_b": teams[b],
+            "winner": self.winner
+        })
+
+        session["submitted"].add(self.match_index)
 
         await interaction.response.defer()
+
+        if len(session["submitted"]) == 2:
+
+            session["submitted"].clear()
+            session["round"] += 1
+
+            if session["round"] <= 3:
+
+                self.view.refresh_buttons()
+
+                await interaction.message.edit(
+                    content=f"**Round {session['round']}**",
+                    view=self.view
+                )
+
+                await self.cog.update_progress(self.guild_id)
+
+            else:
+
+                await self.cog.finish_session(self.guild_id)
 
 
 class Session(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.sessions = {}
 
-        self.active = None
-        self.live_message = None
-        self.live_channel = None
+    async def register_session(
+        self,
+        guild,
+        session_code,
+        mode,
+        teams,
+        category,
+        progress_channel,
+        control_channel,
+        voice_channels
+    ):
 
-    def create(self, teams):
-
-        clubs = [t["club"] for t in teams]
-
-        fixtures = {}
-
-        if len(clubs) == 4:
-
-            fixtures = {
-                1: [(clubs[0], clubs[1]), (clubs[2], clubs[3])],
-                2: [(clubs[0], clubs[2]), (clubs[1], clubs[3])],
-                3: [(clubs[0], clubs[3]), (clubs[1], clubs[2])]
-            }
-
-            mode = "League"
-
-        else:
-
-            fixtures = {
-                1: [(clubs[0], clubs[1])]
-            }
-
-            mode = "Rivals"
-
-        self.active = {
+        self.sessions[guild.id] = {
+            "code": session_code,
             "mode": mode,
             "round": 1,
-            "fixtures": fixtures,
             "teams": teams,
-            "standings": {club: 0 for club in clubs},
-            "completed": []
+            "results": [],
+            "submitted": set(),
+            "category": category,
+            "progress_channel": progress_channel,
+            "control_channel": control_channel,
+            "voice_channels": voice_channels,
+            "progress_message": None
         }
 
-    def current_games(self):
+        await self.create_progress(guild.id)
 
-        return self.active["fixtures"][self.active["round"]]
+        view = SessionControl(self, guild.id)
 
-    def record_win(self, winner):
-
-        self.active["standings"][winner] += 1
-        self.active["completed"].append(winner)
-
-        needed = len(self.current_games())
-
-        if len(self.active["completed"]) == needed:
-
-            self.active["completed"] = []
-
-            if self.active["round"] < len(self.active["fixtures"]):
-                self.active["round"] += 1
-
-            else:
-                self.active["finished"] = True
-
-    async def create_live_hub(self, channel):
-
-        self.live_channel = channel
-
-        embed = self.build_embed()
-
-        self.live_message = await channel.send(
-            embed=embed,
-            view=MatchView(self)
+        await control_channel.send(
+            content="**Round 1**",
+            view=view
         )
 
-    async def update_live_hub(self):
+    async def create_progress(self, guild_id):
 
-        if self.live_message is None:
-            return
+        session = self.sessions[guild_id]
 
-        if self.active.get("finished"):
+        embed = self.build_progress_embed(session)
 
-            winner = max(
-                self.active["standings"],
-                key=self.active["standings"].get
-            )
+        message = await session["progress_channel"].send(embed=embed)
 
-            embed = self.build_embed()
+        session["progress_message"] = message
 
-            embed.title = "🏆 Session Complete"
+    async def update_progress(self, guild_id):
 
-            embed.description = f"**Champions:** {winner}"
+        session = self.sessions[guild_id]
 
-            await self.live_message.edit(
-                embed=embed,
-                view=None
-            )
+        embed = self.build_progress_embed(session)
 
-            return
+        await session["progress_message"].edit(embed=embed)
 
-        await self.live_message.edit(
-            embed=self.build_embed(),
-            view=MatchView(self)
-        )
-
-    def build_embed(self):
+    def build_progress_embed(self, session):
 
         embed = discord.Embed(
-            title=f"⚽ NTF {self.active['mode']} Session",
-            description=f"**Round {self.active['round']}**",
+            title=f"⚽ {session['code']}",
+            description=f"**{session['mode']} • Round {min(session['round'],3)}**",
             colour=0x2EC4FF
         )
 
-        for team in self.active["teams"]:
+        standings = {}
 
-            text = ""
+        for team in session["teams"]:
+            standings[team] = {"W": 0, "L": 0}
 
-            for i, player in enumerate(team["players"]):
+        for result in session["results"]:
 
-                if i == 0:
-                    text += f"👑 <@{player['id']}>\n"
-                else:
-                    text += f"• <@{player['id']}>\n"
+            if result["winner"] == "A":
+                standings[result["team_a"]]["W"] += 1
+                standings[result["team_b"]]["L"] += 1
+            else:
+                standings[result["team_b"]]["W"] += 1
+                standings[result["team_a"]]["L"] += 1
+
+        for team, data in standings.items():
+
+            players = session["teams"][team]["players"]
+            captain = session["teams"][team]["captain"]
+
+            text = f"👑 <@{captain}>\n"
+
+            for player in players:
+                if player != captain:
+                    text += f"• <@{player}>\n"
+
+            text += f"\n**Record:** {data['W']}W-{data['L']}L"
 
             embed.add_field(
-                name=f"{team['club']} • {len(team['players'])}/6",
+                name=f"{team} ({len(players)}/6)",
                 value=text,
                 inline=False
             )
 
-        fixtures = ""
-
-        for a, b in self.current_games():
-
-            fixtures += f"⚽ {a} vs {b}\n"
-
         embed.add_field(
-            name="Current Matches",
-            value=fixtures,
-            inline=False
-        )
-
-        standings = ""
-
-        ordered = sorted(
-            self.active["standings"].items(),
-            key=lambda x: x[1],
-            reverse=True
-        )
-
-        for club, pts in ordered:
-            standings += f"{club} — {pts}\n"
-
-        embed.add_field(
-            name="Standings",
-            value=standings,
-            inline=False
-        )
-
-        embed.add_field(
-            name="🪑 Bench",
-            value="0/4 Slots Used",
+            name="🪑 Shared Bench",
+            value=f"{len(session.get('bench', []))}/4 Players",
             inline=False
         )
 
         return embed
+
+    async def finish_session(self, guild_id):
+
+        session = self.sessions[guild_id]
+
+        # -------------------------
+        # Apply MMR
+        # -------------------------
+
+        changes = await apply_league_session(session)
+
+        # -------------------------
+        # Final standings
+        # -------------------------
+
+        standings = {}
+
+        for team in session["teams"]:
+            standings[team] = {"W": 0, "L": 0}
+
+        for result in session["results"]:
+
+            if result["winner"] == "A":
+                standings[result["team_a"]]["W"] += 1
+                standings[result["team_b"]]["L"] += 1
+            else:
+                standings[result["team_b"]]["W"] += 1
+                standings[result["team_a"]]["L"] += 1
+
+        ranking = sorted(
+            standings.items(),
+            key=lambda x: x[1]["W"],
+            reverse=True
+        )
+
+        embed = discord.Embed(
+            title=f"🏆 {session['code']} Complete",
+            description="Final Standings",
+            colour=0xFFD700
+        )
+
+        medals = ["🥇", "🥈", "🥉", "4️⃣"]
+
+        for i, (team, record) in enumerate(ranking):
+
+            players = session["teams"][team]["players"]
+
+            avg_change = round(
+                sum(changes[p] for p in players) / len(players)
+            )
+
+            embed.add_field(
+                name=f"{medals[i]} {team}",
+                value=f"**{record['W']}W-{record['L']}L**\nMMR: {avg_change:+}",
+                inline=False
+            )
+
+        await session["progress_channel"].send(embed=embed)
+
+        # -------------------------
+        # Cleanup
+        # -------------------------
+
+        for vc in session["voice_channels"]:
+            try:
+                await vc.delete()
+            except:
+                pass
+
+        try:
+            await session["category"].delete()
+        except:
+            pass
+
+        # -------------------------
+        # Reopen Queue
+        # -------------------------
+
+        queue_cog = self.bot.get_cog("Queue")
+
+        if queue_cog:
+            queue_cog.queue.clear()
+            queue_cog.queue_open = False
+
+        del self.sessions[guild_id]
+
+    @app_commands.command(
+        name="sessionstatus",
+        description="Show current session status."
+    )
+    async def sessionstatus(self, interaction: discord.Interaction):
+
+        session = self.sessions.get(interaction.guild.id)
+
+        if not session:
+            await interaction.response.send_message(
+                "No active session."
+            )
+            return
+
+        await interaction.response.send_message(
+            embed=self.build_progress_embed(session)
+        )
 
 
 async def setup(bot):
