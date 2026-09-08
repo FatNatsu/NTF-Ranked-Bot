@@ -157,6 +157,43 @@ class SessionControl(discord.ui.View):
             )
 
         standings={t:{"W":0,"L":0} for t in teams}
+
+        completed=""
+
+        for result in session["results"]:
+
+            if result["winner"]=="A":
+                winner=result["team_a"]
+                loser=result["team_b"]
+            else:
+                winner=result["team_b"]
+                loser=result["team_a"]
+
+            standings[winner]["W"]+=1
+            standings[loser]["L"]+=1
+
+            completed+=(
+                f"**Round {result['round']}**\n"
+                f"{TEAM_EMOJIS.get(winner,'⚽')} **{winner}** defeated "
+                f"{TEAM_EMOJIS.get(loser,'⚽')} {loser}\n\n"
+            )
+
+        if completed:
+            embed.add_field(
+                name="✅ COMPLETED MATCHES",
+                value=completed,
+                inline=False
+            )
+
+        # Team cards
+        for team in teams:
+
+            captain=session["teams"][team]["captain"]
+            players=session["teams"][team]["players"]
+
+            text=""
+
+            if captain:
                 text+=f"👑 <@{captain}>\n"
 
             for player in players:
