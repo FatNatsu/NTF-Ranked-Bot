@@ -1,37 +1,8 @@
-import asyncio
-import aiosqlite
-import discord
-from discord.ext import commands
-from discord import app_commands
-
-DB_NAME = "ntf.db"
-
-class Queue(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-        self.queue = []
-        self.queue_message = None
-        self.queue_open = False
-        self.ready_check = False
-
-    async def get_mode(self):
-        async with aiosqlite.connect(DB_NAME) as db:
-            cur = await db.execute("SELECT value FROM settings WHERE key='match_mode'")
-            row = await cur.fetchone()
-            return row[0] if row else "4team"
-
-    async def limits(self):
-        mode = await self.get_mode()
-        if mode == "4team":
-            return 24, 20, "League Mode"
-        return 12, 10, "Rivals Mode"
-
-    async def queue_embed(self):
-        cap, force, name = await self.limits()
+        cap, force, mode = await self.limits()
 
         embed = discord.Embed(
             title="⚽ NTF Queue",
-            description=f"**{name}**",
+            description=f"**{mode}**",
             colour=0x2EC4FF
         )
 
@@ -43,7 +14,7 @@ class Queue(commands.Cog):
 
         embed.add_field(
             name="Force Start",
-            value=f"**{force} players**",
+            value=f"**{force} Players**",
             inline=True
         )
 
@@ -71,60 +42,54 @@ class Queue(commands.Cog):
         self.ready_check = True
 
         await channel.send(
-            "## ⚡ MATCH FOUND!\nAccepting automatically in **30 seconds**."
+            "## ⚡ MATCH FOUND!\nAccept within **30 seconds**."
         )
 
         await asyncio.sleep(30)
 
-        await channel.send("Building teams...")
+        await channel.send(
+            "🔥 Matchmaking starting..."
+        )
 
-        self.queue_open = False
         self.ready_check = False
+        self.queue_open = False
 
     queue_group = app_commands.Group(
         name="queue",
-        description="Manage the NTF queue."
+        description="Manage the NTF Queue."
     )
 
-    @queue_group.command(name="open", description="Open the NTF queue.")
+    @queue_group.command(name="open", description="Open the queue.")
     @app_commands.default_permissions(administrator=True)
     async def open(self, interaction: discord.Interaction):
 
         if self.queue_open:
             await interaction.response.send_message(
-                "Queue already exists.",
+                "Queue is already open.",
                 ephemeral=True
             )
             return
 
-        self.queue.clear()
-        self.queue_open = True
-
-        self.queue_message = await interaction.channel.send(
-            embed=await self.queue_embed(),
-            view=QueueView(self)
-        )
-
-        await interaction.response.send_message(
-            "Queue opened.",
-            ephemeral=True
-        )
-
-    @queue_group.command(name="forcestart", description="Force start the queue.")
+    @queue_group.command(name="teststart", description="Start a test session with any number of queued players.")
     @app_commands.default_permissions(administrator=True)
-    async def forcestart(self, interaction: discord.Interaction):
+    async def teststart(self, interaction: discord.Interaction, players: int):
 
-        _, force, _ = await self.limits()
-
-        if len(self.queue) != force:
+        if players < 4:
             await interaction.response.send_message(
-                f"Force Start requires exactly **{force}** players.",
+                "Minimum test size is **4** players.",
+                ephemeral=True
+            )
+            return
+
+        if players > len(self.queue):
+            await interaction.response.send_message(
+                f"Only **{len(self.queue)}** players are currently queued.",
                 ephemeral=True
             )
             return
 
         await interaction.response.send_message(
-            "Force Start initiated.",
+            f"🧪 Starting a **{players}-player** test session.",
             ephemeral=True
         )
 
@@ -144,7 +109,7 @@ class Queue(commands.Cog):
             ephemeral=True
         )
 
-    @queue_group.command(name="status", description="Show queued players.")
+    @queue_group.command(name="status", description="View queued players.")
     async def status(self, interaction: discord.Interaction):
 
         if not self.queue:
@@ -153,18 +118,19 @@ class Queue(commands.Cog):
             )
             return
 
-        names = "\n".join(
-            f"• <@{i}>"
-            for i in self.queue
+        players = "\n".join(
+            f"• <@{player}>"
+            for player in self.queue
         )
 
         embed = discord.Embed(
             title="Queued Players",
-            description=names,
+            description=players,
             colour=0x2EC4FF
         )
 
         await interaction.response.send_message(embed=embed)
+
 
 class QueueView(discord.ui.View):
     def __init__(self, cog):
@@ -189,7 +155,7 @@ class QueueView(discord.ui.View):
 
         if interaction.user.id in self.cog.queue:
             await interaction.response.send_message(
-                "You're already queued.",
+                "You're already in the queue.",
                 ephemeral=True
             )
             return
@@ -229,6 +195,7 @@ class QueueView(discord.ui.View):
             "Left the queue.",
             ephemeral=True
         )
+
 
 async def setup(bot):
     await bot.add_cog(Queue(bot))
