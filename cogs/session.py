@@ -19,7 +19,7 @@ TEAM_EMOJIS = {
 }
 
 
----------------- RESULT BUTTON ----------------
+# ---------------- RESULT BUTTON ----------------
 
 class ResultButton(discord.ui.Button):
 
