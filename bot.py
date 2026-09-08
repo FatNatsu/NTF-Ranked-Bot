@@ -17,6 +17,7 @@ intents.voice_states = True
 intents.message_content = True
 
 class NTFBot(commands.Bot):
+
     async def setup_hook(self):
 
         await init_db()
@@ -24,6 +25,7 @@ class NTFBot(commands.Bot):
         await self.load_extension("cogs.setup")
         await self.load_extension("cogs.queue")
         await self.load_extension("cogs.admin")
+        await self.load_extension("cogs.mode")
 
         if GUILD_ID:
             guild = discord.Object(id=int(GUILD_ID))
@@ -34,10 +36,13 @@ class NTFBot(commands.Bot):
 
         print(f"Synced {len(synced)} commands.")
 
-bot = NTFBot(command_prefix="!", intents=intents)
+bot = NTFBot(
+    command_prefix="!",
+    intents=intents
+)
 
 @bot.event
 async def on_ready():
-    print(f"✅ Logged in as {bot.user}")
+    print(f"Logged in as {bot.user}")
 
 bot.run(TOKEN)
