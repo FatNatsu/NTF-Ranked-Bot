@@ -42,8 +42,14 @@ async def init_db():
         """)
 
         await db.execute("""
-        INSERT OR IGNORE INTO settings(key,value)
-        VALUES('match_mode','4team')
+        INSERT OR IGNORE INTO settings(key, value)
+        VALUES('match_mode', '4team')
         """)
 
         for team in DEFAULT_TEAMS:
+            await db.execute(
+                "INSERT OR IGNORE INTO teams(name) VALUES(?)",
+                (team,)
+            )
+
+        await db.commit()
