@@ -1,91 +1,61 @@
+import aiosqlite
 import discord
 from discord.ext import commands
+from discord import app_commands
 
-class WinnerView(discord.ui.View):
-    def __init__(self, session):
-        super().__init__(timeout=None)
-        self.session = session
-
-    @discord.ui.button(label="Team 1 Wins", style=discord.ButtonStyle.success)
-    async def team1(self, interaction, button):
-        await self.finish(interaction, 0)
-
-    @discord.ui.button(label="Team 2 Wins", style=discord.ButtonStyle.success)
-    async def team2(self, interaction, button):
-        await self.finish(interaction, 1)
-
-    async def finish(self, interaction, winner_index):
-
-        session = self.session.active
-
-        if session["mode"] == "4team":
-
-            round_num = session["round"]
-            games = session["fixtures"][round_num]
-
-            game = games[len(session["played"])]
-            winner = game[winner_index]
-
-            session["standings"][winner] += 1
-            session["played"].append(winner)
-
-            await interaction.response.edit_message(
-                content=f"✅ {winner} recorded.",
-                view=None
-            )
-
-            if len(session["played"]) == 2:
-
-                session["played"] = []
-
-                if session["round"] == 3:
-
-                    await interaction.channel.send(
-                        embed=await self.session.standings_embed()
-                    )
-
-                    winner = max(
-                        session["standings"],
-                        key=session["standings"].get
-                    )
-
-                    await interaction.channel.send(
-                        f"🏆 **{winner} wins the session!**"
-                    )
-
-                else:
-
-                    session["round"] += 1
-
-                    await interaction.channel.send(
-                        embed=await self.session.standings_embed()
-                    )
-
-                    await self.session.post_round(interaction.channel)
+DB_NAME = "ntf.db"
 
 class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @discord.app_commands.command(
-        name="controlpanel",
-        description="Open the admin control panel."
-    )
-    @discord.app_commands.default_permissions(administrator=True)
-    async def controlpanel(self, interaction: discord.Interaction):
+    @app_commands.command(name="captain_add", description="Add a player to the captain whitelist.")
+    @app_commands.default_permissions(administrator=True)
+    async def captain_add(self, interaction: discord.Interaction, member: discord.Member):
 
-        session = self.bot.get_cog("Session")
-
-        if not session.active:
-            await interaction.response.send_message(
-                "No active session.",
-                ephemeral=True
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute(
+                "INSERT OR IGNORE INTO captains(user_id) VALUES(?)",
+                (member.id,)
             )
-            return
+            await db.commit()
 
         await interaction.response.send_message(
-            "⚙️ Session Control",
-            view=WinnerView(session)
+            f"✅ {member.mention} has been added to the Captain Whitelist."
+        )
+
+    @app_commands.command(name="captain_remove", description="Remove a player from the captain whitelist.")
+    @app_commands.default_permissions(administrator=True)
+    async def captain_remove(self, interaction: discord.Interaction, member: discord.Member):
+
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute(
+                "DELETE FROM captains WHERE user_id=?",
+                (member.id,)
+            )
+            await db.commit()
+
+        await interaction.response.send_message(
+            f"❌ {member.mention} has been removed from the Captain Whitelist."
+        )
+
+    @app_commands.command(name="captain_list", description="View the captain whitelist.")
+    async def captain_list(self, interaction: discord.Interaction):
+
+        async with aiosqlite.connect(DB_NAME) as db:
+            cur = await db.execute("SELECT user_id FROM captains")
+            rows = await cur.fetchall()
+
+        if not rows:
+            await interaction.response.send_message("No captains have been whitelisted yet.")
+            return
+
+        mentions = []
+        for (user_id,) in rows:
+            mentions.append(f"<@{user_id}>")
+
+        await interaction.response.send_message(
+            "**Captain Whitelist**\n" + "\n".join(mentions)
         )
 
 async def setup(bot):
