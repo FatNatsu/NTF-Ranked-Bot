@@ -437,84 +437,84 @@ class Session(commands.Cog):
                 pass
 
         del self.sessions[guild_id]
-# ---------------- COMMANDS ----------------
+    # ---------------- COMMANDS ----------------
 
-@app_commands.command(
-name="sessionstatus",
-description="Show the current session."
-)
-async def sessionstatus(self, interaction: discord.Interaction):
+    @app_commands.command(
+        name="sessionstatus",
+        description="Show the current session."
+    )
+    async def sessionstatus(self, interaction: discord.Interaction):
 
-session = self.sessions.get(interaction.guild.id)
+        session = self.sessions.get(interaction.guild.id)
 
-if not session:
-idle_embed = discord.Embed(
-title="⚽ NTF In Progress",
-description="No session is currently active.",
-colour=0x2EC4FF
-)
+        if not session:
+            idle_embed = discord.Embed(
+                title="⚽ NTF In Progress",
+                description="**No session is currently active.**",
+                colour=0x2EC4FF
+            )
 
-idle_embed.add_field(
-name="Queue",
-value="Use /queue join when a queue is open.",
-inline=False
-)
+            idle_embed.add_field(
+                name="Queue",
+                value="Use `/queue join` when a queue is open.",
+                inline=False
+            )
 
-return await interaction.response.send_message(embed=idle_embed)
+            return await interaction.response.send_message(embed=idle_embed)
 
-await interaction.response.send_message(
-embed=self.build_progress_embed(session)
-)
+        await interaction.response.send_message(
+            embed=self.build_progress_embed(session)
+        )
 
-# ---------------- /close session ----------------
+    # ---------------- /close session ----------------
 
-@close_group.command(
-name="session",
-description="Force close the current session."
-)
-@app_commands.default_permissions(administrator=True)
-async def close_session(self, interaction: discord.Interaction):
+    @close_group.command(
+        name="session",
+        description="Force close the current session."
+    )
+    @app_commands.default_permissions(administrator=True)
+    async def close_session(self, interaction: discord.Interaction):
 
-if interaction.guild.id not in self.sessions:
-return await interaction.response.send_message(
-"❌ No active session.",
-ephemeral=True
-)
+        if interaction.guild.id not in self.sessions:
+            return await interaction.response.send_message(
+                "❌ No active session.",
+                ephemeral=True
+            )
 
-await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
 
-# Reset the permanent in-progress channel first
-session = self.sessions[interaction.guild.id]
+        # Reset the permanent in-progress channel first
+        session = self.sessions[interaction.guild.id]
 
-idle_embed = discord.Embed(
-title="⚽ NTF In Progress",
-description="No session is currently active.",
-colour=0x2EC4FF
-)
+        idle_embed = discord.Embed(
+            title="⚽ NTF In Progress",
+            description="**No session is currently active.**",
+            colour=0x2EC4FF
+        )
 
-idle_embed.add_field(
-name="Queue",
-value="Use /queue join when a queue is open.",
-inline=False
-)
+        idle_embed.add_field(
+            name="Queue",
+            value="Use `/queue join` when a queue is open.",
+            inline=False
+        )
 
-try:
-await session["progress_message"].edit(embed=idle_embed)
-except:
-pass
+        try:
+            await session["progress_message"].edit(embed=idle_embed)
+        except:
+            pass
 
-await self.cleanup_session(interaction.guild.id)
+        await self.cleanup_session(interaction.guild.id)
 
-try:
-await interaction.followup.send(
-"🧹 Session closed successfully.",
-ephemeral=True
-)
-except discord.NotFound:
-pass
+        try:
+            await interaction.followup.send(
+                "🧹 Session closed successfully.",
+                ephemeral=True
+            )
+        except discord.NotFound:
+            pass
 
 
----------------- SETUP ----------------
+# ---------------- SETUP ----------------
 
 async def setup(bot):
-await bot.add_cog(Session(bot))
+    await bot.add_cog(Session(bot))
