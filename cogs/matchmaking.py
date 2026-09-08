@@ -3,9 +3,20 @@ import aiosqlite
 import discord
 from discord.ext import commands
 
-from utils.team_balancer import TeamBalancer
-
 DB_NAME = "ntf.db"
+
+CLUB_POOL = [
+    "Fram Esports",
+    "Joyboi",
+    "Warya Wonders",
+    "The Fifth Pass",
+    "NTF Eclipse",
+    "Aether FC",
+    "Vanguard",
+    "Nova XI",
+    "Phantom",
+    "Inferno"
+]
 
 
 class Matchmaking(commands.Cog):
@@ -21,223 +32,258 @@ class Matchmaking(commands.Cog):
 
         return row[0] if row else "4team"
 
-    async def get_players(self, user_ids):
-        players = []
-
+    async def generate_session_code(self):
         async with aiosqlite.connect(DB_NAME) as db:
-            for uid in user_ids:
+            cur = await db.execute(
+                "SELECT COUNT(*) FROM sessions"
+            )
+            count = (await cur.fetchone())[0] + 1
 
-                cur = await db.execute(
-                    "SELECT mmr, role FROM players WHERE user_id=?",
-                    (uid,)
-                )
+        return f"NTF-{count:04d}"
 
-                row = await cur.fetchone()
+    async def get_player_mmr(self, user_id):
+        async with aiosqlite.connect(DB_NAME) as db:
+            cur = await db.execute(
+                "SELECT mmr FROM players WHERE user_id=?",
+                (user_id,)
+            )
+            row = await cur.fetchone()
 
-                if row:
-                    mmr, role = row
-                else:
-                    mmr = 1000
-                    role = "ANY"
+            if row:
+                return row[0]
 
-                players.append({
-                    "id": uid,
-                    "mmr": mmr,
-                    "role": role
-                })
+            await db.execute(
+                "INSERT OR IGNORE INTO players(user_id) VALUES(?)",
+                (user_id,)
+            )
+            await db.commit()
 
-        return players
+        return 100
 
-    async def get_captains(self):
-
+    async def get_captain_whitelist(self):
         async with aiosqlite.connect(DB_NAME) as db:
             cur = await db.execute(
                 "SELECT user_id FROM captains"
             )
-
             rows = await cur.fetchall()
 
         return [r[0] for r in rows]
 
-    async def get_clubs(self, amount):
+    async def choose_captains(self, players, amount):
+        whitelist = await self.get_captain_whitelist()
 
-        async with aiosqlite.connect(DB_NAME) as db:
-            cur = await db.execute(
-                "SELECT name FROM teams ORDER BY RANDOM()"
+        available = [p for p in players if p in whitelist]
+
+        if len(available) < amount:
+            raise ValueError(
+                "Not enough whitelisted captains."
             )
 
-            rows = await cur.fetchall()
+        return random.sample(available, amount)
 
-        clubs = [r[0] for r in rows]
+    async def snake_balance(self, players, captain_ids, club_names):
 
-        return clubs[:amount]
+        player_data = []
 
-    async def ensure_text_channel(self, guild, name):
+        for player in players:
+            player_data.append({
+                "id": player,
+                "mmr": await self.get_player_mmr(player)
+            })
 
-        existing = discord.utils.get(
-            guild.text_channels,
-            name=name
+        player_data.sort(
+            key=lambda x: x["mmr"],
+            reverse=True
         )
 
-        if existing:
-            return existing
+        teams = {}
 
-        return await guild.create_text_channel(name)
+        for club, captain in zip(club_names, captain_ids):
 
-    async def start_session(self, guild, queue_ids):
+            captain_mmr = next(
+                p["mmr"]
+                for p in player_data
+                if p["id"] == captain
+            )
 
-        mode = await self.get_mode()
-        team_count = 4 if mode == "4team" else 2
+            teams[club] = {
+                "captain": captain,
+                "players": [captain],
+                "total": captain_mmr
+            }
 
-        clubs = await self.get_clubs(team_count)
-        players = await self.get_players(queue_ids)
-
-        whitelist = await self.get_captains()
-
-        eligible = [
-            p["id"]
-            for p in players
-            if p["id"] in whitelist
+        remaining = [
+            p for p in player_data
+            if p["id"] not in captain_ids
         ]
 
-        if len(eligible) >= team_count:
-            captains = random.sample(eligible, team_count)
-        else:
-            captains = random.sample(
-                queue_ids,
-                min(team_count, len(queue_ids))
-            )
+        order = list(club_names)
 
-        teams = TeamBalancer.balance(
-            players,
-            captains,
-            clubs
+        while remaining:
+
+            for club in order:
+                if not remaining:
+                    break
+
+                player = remaining.pop(0)
+
+                teams[club]["players"].append(player["id"])
+                teams[club]["total"] += player["mmr"]
+
+            order.reverse()
+
+        return teams
+
+    async def create_voice_channels(
+        self,
+        guild,
+        session_code,
+        teams,
+        captain_ids
+    ):
+
+        category = await guild.create_category(
+            f"In Progress - {session_code}"
         )
 
-        category = discord.utils.get(
-            guild.categories,
-            name="In Progress"
-        )
+        voice_channels = []
 
-        if category is None:
-            category = await guild.create_category(
-                "In Progress"
-            )
-        else:
-            for vc in category.voice_channels:
-                await vc.delete()
+        captain_role = None
 
-        captain_role = discord.utils.get(
-            guild.roles,
-            name="👑 Captain"
-        )
+        for role in guild.roles:
+            if role.name == "Captain":
+                captain_role = role
+                break
 
         if captain_role is None:
             captain_role = await guild.create_role(
-                name="👑 Captain",
-                colour=discord.Colour.gold()
+                name="Captain"
             )
 
-        bench_vc = await guild.create_voice_channel(
+        for member_id in captain_ids:
+            member = guild.get_member(member_id)
+            if member:
+                await member.add_roles(captain_role)
+
+        for club in teams:
+
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(
+                    connect=False
+                ),
+                captain_role: discord.PermissionOverwrite(
+                    connect=True,
+                    speak=True
+                )
+            }
+
+            for member_id in teams[club]["players"]:
+                member = guild.get_member(member_id)
+                if member:
+                    overwrites[member] = discord.PermissionOverwrite(
+                        connect=True,
+                        speak=True
+                    )
+
+            vc = await guild.create_voice_channel(
+                club,
+                category=category,
+                overwrites=overwrites
+            )
+
+            voice_channels.append(vc)
+
+        bench = await guild.create_voice_channel(
             "🪑 Bench",
             category=category
         )
 
-        voice_channels = {}
+        voice_channels.append(bench)
 
-        for team in teams:
-
-            vc = await guild.create_voice_channel(
-                team["club"],
-                category=category
-            )
-
-            voice_channels[team["club"]] = vc
-
-        for team in teams:
-
-            vc = voice_channels[team["club"]]
-
-            for i, player in enumerate(team["players"]):
-
-                member = guild.get_member(
-                    player["id"]
-                )
-
-                if member is None:
-                    continue
-
-                await vc.set_permissions(
-                    member,
-                    connect=True,
-                    speak=True,
-                    view_channel=True
-                )
-
-                if i == 0:
-                    await member.add_roles(
-                        captain_role
-                    )
-
-                if member.voice:
-                    try:
-                        await member.move_to(vc)
-                    except Exception:
-                        pass
-
-        in_progress = await self.ensure_text_channel(
-            guild,
-            "in-progress"
+        progress = await guild.create_text_channel(
+            "in-progress",
+            category=category
         )
 
-        control = discord.utils.get(
-            guild.text_channels,
-            name="session-control"
-        )
-
-        if control is None:
-
-            overwrites = {
-                guild.default_role:
-                    discord.PermissionOverwrite(
-                        view_channel=False
-                    )
+        control = await guild.create_text_channel(
+            "session-control",
+            category=category,
+            overwrites={
+                guild.default_role: discord.PermissionOverwrite(
+                    view_channel=False
+                )
             }
-
-            for role in guild.roles:
-
-                if role.permissions.administrator:
-                    overwrites[role] = (
-                        discord.PermissionOverwrite(
-                            view_channel=True,
-                            send_messages=True
-                        )
-                    )
-
-            control = await guild.create_text_channel(
-                "session-control",
-                overwrites=overwrites
-            )
-
-        session = self.bot.get_cog("Session")
-
-        if session:
-
-            session.create(teams)
-
-            await session.create_live_hub(
-                in_progress
-            )
-
-        await control.send(
-            "⚙️ Session created.\nUse the winner buttons below."
         )
 
-        return {
-            "teams": teams,
-            "voice_channels": voice_channels,
-            "bench": bench_vc
-        }
+        return (
+            category,
+            progress,
+            control,
+            voice_channels
+        )
+
+    async def start_session(self, guild, queue):
+
+        mode = await self.get_mode()
+
+        captain_count = 4 if mode == "4team" else 2
+
+        session_code = await self.generate_session_code()
+
+        club_names = random.sample(
+            CLUB_POOL,
+            captain_count
+        )
+
+        captains = await self.choose_captains(
+            queue,
+            captain_count
+        )
+
+        teams = await self.snake_balance(
+            queue,
+            captains,
+            club_names
+        )
+
+        (
+            category,
+            progress,
+            control,
+            voice_channels
+        ) = await self.create_voice_channels(
+            guild,
+            session_code,
+            teams,
+            captains
+        )
+
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute("""
+            INSERT INTO sessions
+            (session_code,mode,status)
+            VALUES(?,?,?)
+            """, (
+                session_code,
+                "League" if mode == "4team" else "Rivals",
+                "active"
+            ))
+            await db.commit()
+
+        session_cog = self.bot.get_cog("Session")
+
+        if session_cog:
+
+            await session_cog.register_session(
+                guild=guild,
+                session_code=session_code,
+                mode="League" if mode == "4team" else "Rivals",
+                teams=teams,
+                category=category,
+                progress_channel=progress,
+                control_channel=control,
+                voice_channels=voice_channels
+            )
 
 
 async def setup(bot):
