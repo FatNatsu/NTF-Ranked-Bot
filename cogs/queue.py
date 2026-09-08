@@ -1,32 +1,19 @@
-import asyncio
-import aiosqlite
 import discord
 from discord.ext import commands
 from discord import app_commands
-
-DB_NAME = "ntf.db"
-
+import asyncio
 
 class QueueView(discord.ui.View):
     def __init__(self, cog):
         super().__init__(timeout=None)
         self.cog = cog
 
-    @discord.ui.button(label="Join Queue", emoji="⚽", style=discord.ButtonStyle.success)
-    async def join(self, interaction: discord.Interaction, button):
+    @discord.ui.button(label="Join Queue", style=discord.ButtonStyle.success)
+    async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
 
         if not self.cog.queue_open:
             await interaction.response.send_message(
-                "Queue isn't open.",
-                ephemeral=True
-            )
-            return
-
-        cap = await self.cog.get_cap()
-
-        if len(self.cog.queue) >= cap:
-            await interaction.response.send_message(
-                "Queue is full.",
+                "Queue is closed.",
                 ephemeral=True
             )
             return
@@ -38,25 +25,37 @@ class QueueView(discord.ui.View):
             )
             return
 
+        limit = 24 if self.cog.mode == "4team" else 12
+
+        if len(self.cog.queue) >= limit:
+            await interaction.response.send_message(
+                "Queue is full.",
+                ephemeral=True
+            )
+            return
+
         self.cog.queue.append(interaction.user.id)
 
-        await self.cog.update_queue()
+        await self.cog.update_queue_message()
 
         await interaction.response.send_message(
             "Joined the queue.",
             ephemeral=True
         )
 
-        if len(self.cog.queue) == cap:
-            await self.cog.launch_session(interaction.guild)
+    @discord.ui.button(label="Leave Queue", style=discord.ButtonStyle.danger)
+    async def leave(self, interaction: discord.Interaction, button: discord.ui.Button):
 
-    @discord.ui.button(label="Leave Queue", emoji="❌", style=discord.ButtonStyle.danger)
-    async def leave(self, interaction: discord.Interaction, button):
+        if interaction.user.id not in self.cog.queue:
+            await interaction.response.send_message(
+                "You're not queued.",
+                ephemeral=True
+            )
+            return
 
-        if interaction.user.id in self.cog.queue:
-            self.cog.queue.remove(interaction.user.id)
+        self.cog.queue.remove(interaction.user.id)
 
-        await self.cog.update_queue()
+        await self.cog.update_queue_message()
 
         await interaction.response.send_message(
             "Left the queue.",
@@ -64,119 +63,155 @@ class QueueView(discord.ui.View):
         )
 
 
-class Queue(commands.GroupCog, group_name="queue"):
+class Queue(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
         self.queue = []
         self.queue_open = False
         self.queue_message = None
-        self.timeout_task = None
+        self.mode = "4team"
 
-    async def get_mode(self):
+    # -------------------------
+    # Queue embed
+    # -------------------------
 
-        async with aiosqlite.connect(DB_NAME) as db:
-            cur = await db.execute(
-                "SELECT value FROM settings WHERE key='match_mode'"
-            )
-            row = await cur.fetchone()
+    async def build_embed(self, guild):
 
-        return row[0] if row else "4team"
-
-    async def get_cap(self):
-        return 24 if await self.get_mode() == "4team" else 12
-
-    async def queue_embed(self):
-
-        cap = await self.get_cap()
-        mode = "League Mode" if cap == 24 else "Rivals Mode"
+        limit = 24 if self.mode == "4team" else 12
 
         embed = discord.Embed(
-            title="⚽ NTF Queue",
-            description=f"**{mode}**",
+            title="NTF Ranked Queue",
+            description=f"**{len(self.queue)}/{limit} Players**",
             colour=0x2EC4FF
         )
 
-        embed.add_field(
-            name="Players",
-            value=f"{len(self.queue)}/{cap}",
-            inline=True
-        )
+        if self.queue:
 
-        embed.add_field(
-            name="Force Start",
-            value="Admin Only",
-            inline=True
-        )
+            text = ""
 
-        embed.add_field(
-            name="Auto Close",
-            value="30 Minutes",
-            inline=True
-        )
+            for i, uid in enumerate(self.queue, start=1):
+
+                member = guild.get_member(uid)
+
+                if member:
+                    text += f"{i}. {member.mention}\n"
+
+            embed.add_field(
+                name="Queue",
+                value=text,
+                inline=False
+            )
+
+        else:
+
+            embed.add_field(
+                name="Queue",
+                value="Nobody queued.",
+                inline=False
+            )
 
         return embed
 
-    async def update_queue(self):
+    async def update_queue_message(self):
 
         if self.queue_message:
+
+            embed = await self.build_embed(self.queue_message.guild)
+
             await self.queue_message.edit(
-                embed=await self.queue_embed(),
+                embed=embed,
                 view=QueueView(self)
             )
+
+    # -------------------------
+    # Auto close
+    # -------------------------
 
     async def auto_close(self):
 
         await asyncio.sleep(1800)
 
         if self.queue_open:
+
             self.queue_open = False
-            self.queue.clear()
 
-            if self.queue_message:
-                await self.queue_message.edit(
-                    content="⏰ Queue automatically closed after 30 minutes.",
-                    embed=None,
-                    view=None
-                )
+            await self.update_queue_message()
 
-    async def launch_session(self, guild):
+    # -------------------------
+    # Launch session
+    # -------------------------
 
-        self.queue_open = False
+    async def launch_session(
+        self,
+        interaction,
+        guild
+    ):
 
         matchmaking = self.bot.get_cog("Matchmaking")
 
-        if matchmaking:
-            await matchmaking.start_session(
-                guild,
-                self.queue.copy()
-            )
-
-        self.queue.clear()
-
-    @app_commands.command(name="open")
-    @app_commands.default_permissions(administrator=True)
-    async def open(self, interaction: discord.Interaction):
-
-        if self.queue_open:
-            await interaction.response.send_message(
-                "Queue already open.",
+        if matchmaking is None:
+            await interaction.followup.send(
+                "Matchmaking isn't loaded.",
                 ephemeral=True
             )
             return
 
-        self.queue.clear()
+        if len(self.queue) == 0:
+            await interaction.followup.send(
+                "Nobody is queued.",
+                ephemeral=True
+            )
+            return
+
+        try:
+
+            await matchmaking.start_session(
+                guild=guild,
+                queue=self.queue.copy()
+            )
+
+            self.queue.clear()
+            self.queue_open = False
+
+            await self.update_queue_message()
+
+            await interaction.followup.send(
+                "Session started.",
+                ephemeral=True
+            )
+
+        except Exception as e:
+
+            await interaction.followup.send(
+                f"Failed to start session.\n`{e}`",
+                ephemeral=True
+            )
+
+            raise
+
+    # -------------------------
+    # Slash commands
+    # -------------------------
+
+    queue_group = app_commands.Group(
+        name="queue",
+        description="NTF Queue commands."
+    )
+
+    @queue_group.command(name="open", description="Open the queue.")
+    @app_commands.default_permissions(administrator=True)
+    async def open(self, interaction: discord.Interaction):
+
         self.queue_open = True
 
+        self.queue.clear()
+
+        embed = await self.build_embed(interaction.guild)
+
         self.queue_message = await interaction.channel.send(
-            embed=await self.queue_embed(),
+            embed=embed,
             view=QueueView(self)
-        )
-
-        if self.timeout_task:
-            self.timeout_task.cancel()
-
-        self.timeout_task = asyncio.create_task(
-            self.auto_close()
         )
 
         await interaction.response.send_message(
@@ -184,57 +219,59 @@ class Queue(commands.GroupCog, group_name="queue"):
             ephemeral=True
         )
 
-    @app_commands.command(name="forcestart")
-    @app_commands.default_permissions(administrator=True)
-    async def forcestart(self, interaction: discord.Interaction):
-
-        if len(self.queue) < 1:
-            await interaction.response.send_message(
-                "At least one player is required.",
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.send_message(
-            f"🚀 Force starting with {len(self.queue)} players.",
-            ephemeral=True
+        self.bot.loop.create_task(
+            self.auto_close()
         )
 
-        await self.launch_session(interaction.guild)
-
-    @app_commands.command(name="close")
+    @queue_group.command(name="close", description="Close the queue.")
     @app_commands.default_permissions(administrator=True)
     async def close(self, interaction: discord.Interaction):
 
         self.queue_open = False
-        self.queue.clear()
 
-        if self.queue_message:
-            await self.queue_message.edit(
-                content="Queue closed.",
-                embed=None,
-                view=None
-            )
+        await self.update_queue_message()
 
         await interaction.response.send_message(
             "Queue closed.",
             ephemeral=True
         )
 
-    @app_commands.command(name="status")
-    async def status(self, interaction: discord.Interaction):
+    @queue_group.command(name="forcestart", description="Force start the session.")
+    @app_commands.default_permissions(administrator=True)
+    async def forcestart(self, interaction: discord.Interaction):
 
-        if not self.queue:
+        await interaction.response.defer(
+            ephemeral=True
+        )
+
+        await self.launch_session(
+            interaction,
+            interaction.guild
+        )
+
+    @queue_group.command(name="mode", description="Switch between League and Rivals.")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(mode="league or rivals")
+    async def mode_command(self, interaction: discord.Interaction, mode: str):
+
+        mode = mode.lower()
+
+        if mode == "league":
+            self.mode = "4team"
+
+        elif mode == "rivals":
+            self.mode = "2team"
+
+        else:
             await interaction.response.send_message(
-                "Nobody is queued."
+                "Use 'league' or 'rivals'.",
+                ephemeral=True
             )
             return
 
         await interaction.response.send_message(
-            "\n".join(
-                f"• <@{p}>"
-                for p in self.queue
-            )
+            f"Mode changed to {mode.title()}.",
+            ephemeral=True
         )
 
 
