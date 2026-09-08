@@ -132,28 +132,34 @@ class SessionControl(discord.ui.View):
             )
 
 
+
+Taiyyab Hussain <xdtaiyyab420@gmail.com>
+17:02 (0 minutes ago)
+to me
+
 # ---------------- SESSION COG ----------------
 
 class Session(commands.Cog):
 
-close_group = app_commands.Group(
-name="close",
-description="Session closing commands."
-)
+    close_group = app_commands.Group(
+        name="close",
+        description="Session closing commands."
+    )
 
-def init(self, bot):
-self.bot = bot
-self.sessions = {}
-async def register_session(
-self,
-guild,
-session_code,
-mode,
-teams,
-category,
-control_channel,
-voice_channels
-):
+    def __init__(self, bot):
+        self.bot = bot
+        self.sessions = {}
+
+    async def register_session(
+        self,
+        guild,
+        session_code,
+        mode,
+        teams,
+        category,
+        control_channel,
+        voice_channels,
+    ):
 
 # Permanent in-progress channel
 progress_channel = discord.utils.get(
