@@ -47,14 +47,14 @@ class NTFBot(commands.Bot):
                 print(f"❌ Failed to load {extension}: {e}")
 
         # Sync slash commands
-        if GUILD_ID:
-            guild = discord.Object(id=int(GUILD_ID))
-            self.tree.copy_global_to(guild=guild)
-            synced = await self.tree.sync(guild=guild)
-        else:
-            synced = await self.tree.sync()
+if GUILD_ID:
+    guild = discord.Object(id=int(GUILD_ID))
+    self.tree.copy_global_to(guild=guild)
+    synced = await self.tree.sync(guild=guild)
+else:
+    synced = await self.tree.sync()
 
-        print(f"🔄 Synced {len(synced)} slash commands.")
+print(f"🟦 Synced {len(synced)} slash commands.", flush=True)
 
 bot = NTFBot()
 
