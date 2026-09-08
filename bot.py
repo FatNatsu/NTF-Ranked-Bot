@@ -36,6 +36,7 @@ class NTFBot(commands.Bot):
             "cogs.matchmaking",
             "cogs.session"
             "cogs.profile"
+            "cogs.leaderboard"
         ]
 
         for extension in extensions:
