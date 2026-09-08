@@ -207,12 +207,12 @@ self.sessions[guild.id]["control_message"] = control_message
     # ---------------- LIVE EMBED ----------------
 
     def build_progress_embed(self, session):
-
         embed = discord.Embed(
             title=f"⚽ {session['code']}",
-            description=f"**{session['mode']} • Round {min(session['round'],3)}**",
+            description=f"**{session['mode']} • Round {min(session['round'], 3)}**",
             colour=0x2EC4FF
         )
+
         teams = list(session["teams"].keys())
 
         # Live Fixtures
