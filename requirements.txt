@@ -1,0 +1,5 @@
+discord.py==2.4.0
+aiosqlite
+python-dotenv
+apscheduler
+loguru
