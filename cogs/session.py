@@ -164,9 +164,7 @@ class Session(commands.Cog):
         )
 
         if progress_channel is None:
-            progress_channel = await guild.create_text_channel(
-                "in-progress"
-            )
+            progress_channel = await guild.create_text_channel("in-progress")
 
         self.sessions[guild.id] = {
             "code": session_code,
@@ -184,25 +182,25 @@ class Session(commands.Cog):
             "control_message": None
         }
 
-# Clear previous bot messages
-try:
-    async for msg in progress_channel.history(limit=20):
-        if msg.author == self.bot.user:
-            await msg.delete()
-except:
-    pass
+        # Clear previous bot messages
+        try:
+            async for msg in progress_channel.history(limit=20):
+                if msg.author == self.bot.user:
+                    await msg.delete()
+        except:
+            pass
 
-progress_message = await progress_channel.send(
-    embed=self.build_progress_embed(self.sessions[guild.id])
-)
+        progress_message = await progress_channel.send(
+            embed=self.build_progress_embed(self.sessions[guild.id])
+        )
 
-control_message = await control_channel.send(
-    f"## 🏆 {session_code} • Round 1",
-    view=SessionControl(self, guild.id)
-)
+        control_message = await control_channel.send(
+            f"## 🏆 {session_code} • Round 1",
+            view=SessionControl(self, guild.id)
+        )
 
-self.sessions[guild.id]["progress_message"] = progress_message
-self.sessions[guild.id]["control_message"] = control_message
+        self.sessions[guild.id]["progress_message"] = progress_message
+        self.sessions[guild.id]["control_message"] = control_message
 
     # ---------------- LIVE EMBED ----------------
 
