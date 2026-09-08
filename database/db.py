@@ -6,19 +6,22 @@ DB_NAME = "ntf.db"
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
 
+        # -------------------------
         # Players
+        # -------------------------
         await db.execute("""
         CREATE TABLE IF NOT EXISTS players(
             user_id INTEGER PRIMARY KEY,
             mmr INTEGER DEFAULT 100,
             wins INTEGER DEFAULT 0,
             losses INTEGER DEFAULT 0,
-            games_played INTEGER DEFAULT 0,
-            last_rating TEXT DEFAULT 'E'
+            games_played INTEGER DEFAULT 0
         )
         """)
 
-        # Queue settings
+        # -------------------------
+        # Settings
+        # -------------------------
         await db.execute("""
         CREATE TABLE IF NOT EXISTS settings(
             key TEXT PRIMARY KEY,
@@ -26,20 +29,23 @@ async def init_db():
         )
         """)
 
-        # Match mode
         await db.execute("""
         INSERT OR IGNORE INTO settings(key,value)
         VALUES('match_mode','4team')
         """)
 
-        # Captain whitelist
+        # -------------------------
+        # Captain Whitelist
+        # -------------------------
         await db.execute("""
         CREATE TABLE IF NOT EXISTS captains(
             user_id INTEGER PRIMARY KEY
         )
         """)
 
+        # -------------------------
         # Teams
+        # -------------------------
         await db.execute("""
         CREATE TABLE IF NOT EXISTS teams(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,17 +72,23 @@ async def init_db():
                 (team,)
             )
 
+        # -------------------------
         # Sessions
+        # -------------------------
         await db.execute("""
         CREATE TABLE IF NOT EXISTS sessions(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_code TEXT UNIQUE,
             mode TEXT,
             winner TEXT,
+            status TEXT DEFAULT 'active',
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
         """)
 
-        # Individual matches
+        # -------------------------
+        # Matches
+        # -------------------------
         await db.execute("""
         CREATE TABLE IF NOT EXISTS matches(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,11 +96,14 @@ async def init_db():
             round INTEGER,
             team_a TEXT,
             team_b TEXT,
-            winner TEXT
+            winner TEXT,
+            mmr_change INTEGER DEFAULT 0
         )
         """)
 
+        # -------------------------
         # Club Legacy
+        # -------------------------
         await db.execute("""
         CREATE TABLE IF NOT EXISTS club_stats(
             club_name TEXT PRIMARY KEY,
@@ -106,7 +121,9 @@ async def init_db():
             VALUES(?)
             """, (team,))
 
-        # Player club history
+        # -------------------------
+        # Player Club History
+        # -------------------------
         await db.execute("""
         CREATE TABLE IF NOT EXISTS club_history(
             user_id INTEGER,
@@ -117,12 +134,36 @@ async def init_db():
         )
         """)
 
-        # Recent form
+        # -------------------------
+        # Recent Form
+        # -------------------------
         await db.execute("""
         CREATE TABLE IF NOT EXISTS recent_form(
             user_id INTEGER,
             result TEXT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
+        # -------------------------
+        # Leaderboard Message
+        # -------------------------
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS leaderboard_message(
+            guild_id INTEGER PRIMARY KEY,
+            channel_id INTEGER,
+            message_id INTEGER
+        )
+        """)
+
+        # -------------------------
+        # Hall of Fame Message
+        # -------------------------
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS halloffame_message(
+            guild_id INTEGER PRIMARY KEY,
+            channel_id INTEGER,
+            message_id INTEGER
         )
         """)
 
