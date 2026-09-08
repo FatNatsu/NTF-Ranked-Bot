@@ -15,11 +15,14 @@ intents.message_content = True
 
 class NTFBot(commands.Bot):
     async def setup_hook(self):
-        # Only load the setup cog for now
         await self.load_extension("cogs.setup")
 
-        synced = await self.tree.sync()
-        print(f"Synced {len(synced)} command(s).")
+        guild = discord.Object(id=int(os.getenv("GUILD_ID")))
+
+        self.tree.copy_global_to(guild=guild)
+        synced = await self.tree.sync(guild=guild)
+
+        print(f"Synced {len(synced)} guild commands.")
 
 bot = NTFBot(command_prefix="!", intents=intents)
 
