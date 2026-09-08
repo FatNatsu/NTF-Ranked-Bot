@@ -85,8 +85,8 @@ class Queue(commands.GroupCog, group_name="queue"):
     @app_commands.command(name="teststart", description="Start a test session with queued players.")
     @app_commands.default_permissions(administrator=True)
     async def teststart(self, interaction: discord.Interaction, players: int):
-        if players < 4:
-            await interaction.response.send_message("Minimum is **4** players.", ephemeral=True)
+        if players < 1:
+            await interaction.response.send_message("Minimum is **1** players.", ephemeral=True)
             return
 
         if players > len(self.queue):
