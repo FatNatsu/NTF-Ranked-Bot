@@ -97,37 +97,39 @@ class ResultButton(discord.ui.Button):
 
 class SessionControl(discord.ui.View):
 
-def init(self, cog, guild_id):
-super().init(timeout=None)
+    def __init__(self, cog, guild_id):
+        super().__init__(timeout=None)
 
-session = cog.sessions[guild_id]
-teams = list(session["teams"].keys())
+        self.cog = cog
+        self.guild_id = guild_id
 
-pairings = ROUND_SCHEDULE[session["round"]]
+        session = cog.sessions[guild_id]
+        teams = list(session["teams"].keys())
 
-for match_index, (a, b) in enumerate(pairings):
+        pairings = ROUND_SCHEDULE[session["round"]]
 
-self.add_item(
-ResultButton(
-cog,
-guild_id,
-match_index,
-teams[a],
-"A",
-row=match_index
-)
-)
+        for match_index, (a, b) in enumerate(pairings):
+            self.add_item(
+                ResultButton(
+                    cog,
+                    guild_id,
+                    match_index,
+                    teams[a],
+                    "A",
+                    row=match_index
+                )
+            )
 
-self.add_item(
-ResultButton(
-cog,
-guild_id,
-match_index,
-teams[b],
-"B",
-row=match_index
-)
-)
+            self.add_item(
+                ResultButton(
+                    cog,
+                    guild_id,
+                    match_index,
+                    teams[b],
+                    "B",
+                    row=match_index
+                )
+            )
 
 
 # ---------------- SESSION COG ----------------
