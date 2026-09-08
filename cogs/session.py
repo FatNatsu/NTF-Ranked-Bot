@@ -435,4 +435,4 @@ class Session(commands.Cog):
 
 
 async def setup(bot):
-    await bot.add_cog(Session)bot))
+    await bot.add_cog(Session(bot))
