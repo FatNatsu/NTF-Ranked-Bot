@@ -11,8 +11,8 @@ TOKEN = os.getenv("TOKEN")
 GUILD_ID = os.getenv("GUILD_ID")
 
 intents = discord.Intents.default()
-intents.members = True
 intents.guilds = True
+intents.members = True
 intents.voice_states = True
 intents.message_content = True
 
@@ -24,10 +24,10 @@ class NTFBot(commands.Bot):
         )
 
     async def setup_hook(self):
-        # Create the database
+        # Initialise database
         await init_db()
 
-        # Load all NTF cogs
+        # Load all cogs
         extensions = [
             "cogs.setup",
             "cogs.queue",
@@ -40,11 +40,11 @@ class NTFBot(commands.Bot):
         for extension in extensions:
             try:
                 await self.load_extension(extension)
-                print(f"Loaded {extension}")
+                print(f"✅ Loaded {extension}")
             except Exception as e:
-                print(f"Failed to load {extension}: {e}")
+                print(f"❌ Failed to load {extension}: {e}")
 
-        # Sync slash commands instantly to your server
+        # Sync slash commands
         if GUILD_ID:
             guild = discord.Object(id=int(GUILD_ID))
             self.tree.copy_global_to(guild=guild)
@@ -52,14 +52,14 @@ class NTFBot(commands.Bot):
         else:
             synced = await self.tree.sync()
 
-        print(f"Synced {len(synced)} command(s).")
+        print(f"🔄 Synced {len(synced)} slash commands.")
 
 bot = NTFBot()
 
 @bot.event
 async def on_ready():
     print("=" * 40)
-    print(f"Logged in as {bot.user}")
+    print(f"Logged in as: {bot.user}")
     print(f"Bot ID: {bot.user.id}")
     print("=" * 40)
 
